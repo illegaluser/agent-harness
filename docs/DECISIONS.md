@@ -245,3 +245,37 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   만이 아니라 이 세 경로를 모두 닫아야 D-003 이 오래간다.
 - 결정자 (Decider): 사용자 (User)
 - 연결 (Links): `base/docs/harness/01-roles.md` R3·R4·R5 메타 표 · `base/docs/harness/03-adoption.md` · `base/templates/CLAUDE.harness-global.md` · [[D-003]]
+
+## D-005 · Classify Maker's plan deviations into method vs scope, and require a pre-substitution count check / Maker 의 계획 이탈을 방법·범위로 구분하고 치환 전 대상 개수 확인을 의무화 — 2026-07-12
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: While performing a substitution, Maker discovered that the target string was identical not
+  only in the intended row but also in a different role's row. The plan's assert condition caught
+  this, but the plan required Maker to stop and report — instead Maker changed its method on its
+  own and continued. There was no rule distinguishing the kinds of deviation.
+  KO: Maker 가 치환 작업 중 대상 문자열이 의도한 행 말고 다른 역할의 행에도 동일하게 존재함을
+  발견했다. 계획서의 assert 조건이 이를 잡았지만, 계획서는 "멈추고 보고"를 요구했는데 Maker 는
+  스스로 방법을 바꿔 진행했다. 이탈의 종류를 구분하는 규정이 없었다.
+- 결정 (Decision):
+  EN: Split deviations in the Maker definition into two kinds — a method deviation may proceed but
+  must always be disclosed, while a scope/goal deviation requires an immediate stop. When the kind
+  is unclear, default to stopping. Also require counting the targets before any multi-site
+  substitution.
+  KO: Maker 정의에 이탈을 두 종류로 구분한다 — 방법 이탈은 진행하되 반드시 보고, 범위·목표
+  이탈은 즉시 정지. 판단이 서지 않으면 정지. 아울러 다중 치환 전 대상 개수 확인을 의무화한다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: (1) Stop on every deviation — rejected. Stopping every time the method changes creates a
+  user round-trip each time, exploding token and latency cost, which conflicts with D-003's
+  savings goal. (2) Leave all deviations to Maker's discretion — rejected. It would erode the
+  plan's authority and hollow out the approval gate.
+  KO: (1) 모든 이탈에서 정지 — 기각. 방법이 바뀔 때마다 사용자 왕복이 생겨 토큰·지연 비용이
+  폭발하고, 이는 D-003 의 절감 목표와 충돌한다. (2) 모든 이탈을 Maker 재량에 맡김 — 기각.
+  계획서의 권위가 무너지고 승인 게이트가 형해화된다.
+- 사유 (Rationale):
+  EN: A plan constrains the goal and the scope, not the means. However, the fact that the means
+  changed is something the verifier needs to know, so disclosure is never waived.
+  KO: 계획은 목표와 범위를 구속하는 것이지 수단까지 구속하는 것이 아니다. 다만 수단을 바꿨다는
+  사실은 검증자가 알아야 하므로 보고는 면제되지 않는다.
+- 결정자 (Decider): 사용자 (User)
+- 연결 (Links): `base/agents/maker.md` · [[D-003]]
