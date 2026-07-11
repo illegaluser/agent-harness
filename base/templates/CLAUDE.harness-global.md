@@ -27,7 +27,7 @@ docs: 하네스 커밋 규약 추가 / Add harness commit convention
 ## Subagent 위임 규칙 — Scout → Architect → Maker → Critic
 
 > 스펙 출처: 이식 대상 프로젝트의 `docs/harness/00-definition.md` · `01-roles.md` · `02-orchestration.md`
-> · `03-adoption.md` (harness-dist로 설치됨)
+> · `03-adoption.md` (하네스 설치 시 프로젝트에 함께 배포됨)
 
 `~/.claude/agents/` 에 **scout / architect / maker / critic / referee** 다섯 글로벌 subagent 정의가
 있다. 프로젝트가 자기 `.claude/agents/` 에 같은 이름으로 정의를 두면 그 프로젝트에서는 project-level

@@ -50,7 +50,7 @@
 
 ### 의사결정 로그 위치
 
-기본값 `docs/DECISIONS.md`(`harness-dist/base/templates/DECISIONS.seed.md`로 시드됨)를 그대로 쓰면
+기본값 `docs/DECISIONS.md`(`base/templates/DECISIONS.seed.md`로 시드됨)를 그대로 쓰면
 이 항목은 생략 가능. 바꿀 경우에만 실제 경로를 명시: {{DECISIONS_LOG_PATH}}
 
 ### Claude Code 훅 — 자기신고 마커의 기계적 이중화 (설치했다면)
