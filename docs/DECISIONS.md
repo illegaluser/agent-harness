@@ -82,3 +82,47 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   설치할 수 있는 1급의 독립 버전관리 산출물이 된다.
 - 결정자 (Decider): 사용자 (User)
 - 연결 (Links): [`README.md`](../README.md) · 출처 저장소: 비공개 사설 프로젝트
+
+## D-002 · Bilingual (KO/EN) commit message convention / 커밋 메시지 한글·영문 병기 규약 — 2026-07-12
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: The harness R0.3 global rules mandated Korean-only commit messages, duplicated verbatim
+  across five agent definitions and the R0 spec. Contributors and tooling that read English
+  histories could not follow the log, and there was no single canonical place holding the
+  message format.
+  KO: 하네스 R0.3 글로벌 룰은 한국어 전용 커밋 메시지를 요구했고, 그 문장이 5개 에이전트
+  정의와 R0 스펙에 그대로 중복돼 있었다. 영문 이력을 읽는 사람·도구는 로그를 따라갈 수
+  없었고, 메시지 형식의 정본이 한 곳에 없었다.
+- 결정 (Decision):
+  EN: Require bilingual commit messages — title `<type>: <KO summary> / <EN summary>`, body as a
+  Korean bullet block followed by an `[EN]` separator line and a matching English bullet block.
+  The full format and example live in one canonical place, the harness-managed block of the
+  global CLAUDE.md; the R0.3 bullet in the five agent files and 01-roles keeps a self-contained
+  one-line rule that points there.
+  KO: 커밋 메시지를 한글·영문 병기로 요구한다 — 제목은 `<type>: <한국어 요약> / <English
+  summary>`, 본문은 한국어 불릿 블록 뒤에 `[EN]` 구분자 줄과 대응하는 영문 불릿 블록.
+  전체 형식과 예시는 단일 정본(글로벌 CLAUDE.md 의 하네스 관리 블록)에 두고, 5개 에이전트
+  파일과 01-roles 의 R0.3 불릿에는 자립 가능한 한 줄 규칙 + 정본 참조만 남긴다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: (1) A bare `---` separator between the two blocks — rejected: verified that `git am` on
+  `git format-patch` output treats any line starting with `---` as the patch boundary and drops
+  the entire English block. (2) Keeping the full format duplicated in all six R0.3 copies —
+  rejected: it re-creates the drift this repo exists to prevent. (3) Replacing the R0.3 bullet
+  with a bare pointer to the global CLAUDE.md — rejected: a project may override an agent file
+  wholesale (03-adoption A2.1), and that copy must still carry an operative rule.
+  KO: (1) 두 블록 사이에 맨 `---` 구분자 — 기각: `git format-patch` 산출물을 `git am` 으로
+  적용하면 `---` 로 시작하는 줄을 패치 경계로 보고 영문 블록 전체를 버리는 것을 실측 확인.
+  (2) 여섯 개 R0.3 사본 전부에 전체 형식을 중복 기술 — 기각: 이 저장소가 막으려는 드리프트를
+  다시 만든다. (3) R0.3 불릿을 글로벌 CLAUDE.md 참조만으로 축약 — 기각: 프로젝트가 에이전트
+  파일을 통째로 오버라이드할 수 있고(03-adoption A2.1) 그 사본도 규칙을 자립적으로 실어야 한다.
+- 사유 (Rationale):
+  EN: Korean stays first because the primary reader is a non-developer; English is added so the
+  history is legible to English-reading contributors and tooling. Placing the canonical text
+  inside the HARNESS-managed marker block makes `install-harness.sh --global` the single sync
+  path (idempotent, backed up, reversible by `--uninstall`).
+  KO: 1차 독자가 비개발자이므로 한국어를 앞에 둔다. 영문은 영어권 기여자·도구가 이력을 읽을 수
+  있게 덧붙인다. 정본을 HARNESS 관리 마커 블록 안에 두면 `install-harness.sh --global` 이 유일한
+  동기화 경로가 된다(멱등·백업·`--uninstall` 로 되돌림 가능).
+- 결정자 (Decider): 사용자 (User)
+- 연결 (Links): `base/templates/CLAUDE.harness-global.md` · `base/docs/harness/01-roles.md` R0.3 · `base/agents/*.md` R0.3
