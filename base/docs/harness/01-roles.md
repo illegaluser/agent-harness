@@ -173,7 +173,7 @@ read-only 도구만 쓴다. 파일을 수정하지 않는다.
 | 속성 | 값 |
 | --- | --- |
 | 권한 | **read/write** (Read, Write, Edit, Glob, Grep, Bash) |
-| 기본 모델 / effort | 표준 tier / **high** |
+| 기본 모델 / effort | 표준 tier / **medium** |
 | SDLC 위치 | 구현 → 릴리스 노트 (요청 시 PR·머지까지) |
 | 책임 | **코드 변경 + 변경 요약** |
 
@@ -282,7 +282,7 @@ shell 은 함수 정의 위에 `# EN: ...` 단락 / 빈 줄 / `# KO: ...` 단락
 | 속성 | 값 |
 | --- | --- |
 | 권한 | **read-only** (Read, Glob, Grep, Bash 읽기전용) |
-| 기본 모델 / effort | 상위 tier / **high** (품질의 최후 방어선) |
+| 기본 모델 / effort | 표준 tier / **high** (품질의 최후 방어선. 고위험 변경은 호출 시 상위 tier 로 승격한다 — 글로벌 `CLAUDE.md` 의 "검증 등급" 참조) |
 | SDLC 위치 | 테스트·검증 |
 | 책임 | **결함·판정 보고** |
 
@@ -354,7 +354,7 @@ shell 은 함수 정의 위에 `# EN: ...` 단락 / 빈 줄 / `# KO: ...` 단락
 | 속성 | 값 |
 | --- | --- |
 | 권한 | **read-only** (Read, Glob, Grep) |
-| 기본 모델 / effort | 상위 tier / **high** |
+| 기본 모델 / effort | 표준 tier / **medium** |
 | SDLC 위치 | 오케스트레이션 (팬아웃·분할 시에만 등장) |
 | 책임 | **종합·채점** |
 

@@ -34,7 +34,7 @@
   architect.md   # R2  — read-only, effort high
   maker.md       # R3  — read/write, effort medium
   critic.md      # R4  — read-only, effort high
-  referee.md     # R5  — read-only, effort high
+  referee.md     # R5  — read-only, effort medium
 ```
 
 각 파일 본문 = **R0 공통 규범 + 해당 역할 시스템 프롬프트**(01-roles의 프롬프트 블록 그대로).
@@ -44,7 +44,7 @@
 전 프로젝트 공통 룰. 하네스 관련으로 담을 것:
 
 - **파이프라인 발동/스킵 조건** — 어떤 작업에 하네스를 돌리고 어떤 작업은 직접 처리하나(O2 선택 가이드 + 스킵 우선).
-- **R0.3 글로벌 룰** — lint, 구독형 LLM 금지, PR/머지는 요청 시, `--no-verify` 금지, 커밋 메시지 규약(한글·영문 병기 — 형식·예시의 정본은 이 파일이다).
+- **R0.3 글로벌 룰** — lint, 구독형 LLM 금지, PR/머지는 요청 시, `--no-verify` 금지, 커밋 메시지 규약(한글·영문 병기 — 형식·예시의 정본은 글로벌 `CLAUDE.md` 이다).
 - **역할 경계 요약** — Maker만 write, Maker ≠ Critic 등 불변식(00-definition C4).
 
 > 현재 `~/.claude/CLAUDE.md`에 이미 planner/implementer/verifier 파이프라인 규칙이 있다. 마이그레이션(A4)에서 이를 5원형 기준으로 갱신한다.
