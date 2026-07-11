@@ -187,3 +187,61 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   맡기지 않고 명시적 규칙으로 못박을 필요가 있다.
 - 결정자 (Decider): 사용자 (User)
 - 연결 (Links): `base/templates/CLAUDE.harness-global.md` · `base/agents/maker.md` · `base/agents/critic.md` · `base/agents/referee.md`
+
+## D-004 · Close three existential warnings from the D-003 verification verdict / D-003 검증 판정의 존립 위협 3건 해소 — 2026-07-12
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: After the D-003 token-saving settings landed, Critic returned a CONDITIONAL verdict with
+  five WARNINGs, three of which threatened the change's survival: (a) the airgap project's stale
+  vendored harness copy (`harness-dist/`) still shipped a working installer whose `--global
+  --force` run would silently overwrite today's global config with yesterday's frontmatter,
+  undoing the settings; (b) the role spec's meta tables in `01-roles.md` still prescribed the old
+  models/effort for Maker, Critic, and Referee, and under the harness's own Docs-First norm the
+  spec outranks the implementation, so the stale table would eventually win back; (c) the
+  mechanical-change rule and the auto-pipeline categories in the global CLAUDE.md template could
+  both apply to the same change (e.g. a rename that touches `build.sh`) with no stated precedence.
+  KO: D-003 토큰 절감 설정이 반영된 뒤, Critic 이 CONDITIONAL 판정과 WARNING 5건을 냈고 그중
+  3건이 이 변경의 존립을 위협했다 — (a) airgap 프로젝트의 옛 하네스 배포 사본
+  (`harness-dist/`)이 여전히 동작하는 인스톨러를 담고 있어 `--global --force` 를 실행하면
+  오늘 설정이 어제의 옛 frontmatter 로 조용히 덮여 되돌아갈 위험이 있었음; (b) `01-roles.md`
+  의 메타 표가 여전히 Maker·Critic·Referee 의 옛 모델/effort 를 규정했고, 하네스 자신의
+  Docs-First 규범상 스펙이 구현을 이기므로 방치하면 결국 옛 표가 다시 이김; (c) 글로벌
+  CLAUDE.md 템플릿의 기계적 변경 규칙과 자동 파이프라인 카테고리가 같은 변경(예: `build.sh`
+  를 포함한 이름 치환)에 동시에 적용될 수 있는데 우선순위 문장이 없었음.
+- 결정 (Decision):
+  EN: (a) Delete `harness-dist/` from the airgap repo entirely (it is a consumer, not a
+  distributor, of the harness) and fix the two stray references to that directory name left in
+  H's own templates. (b) Update the R3/R4/R5 default-model/effort rows in `01-roles.md` (both H's
+  canonical copy and A's project copy) to match the new frontmatter: Maker and Referee to standard
+  tier / medium, Critic to standard tier / high with an explicit escalate-on-high-risk note; also
+  fix `03-adoption.md`'s Referee effort line and repoint its R0.3 commit-convention pointer at the
+  global CLAUDE.md instead of an ambiguous "this file". (c) Add a precedence paragraph to the
+  mechanical-change section of the global CLAUDE.md template stating that pipeline categories win
+  over the mechanical-change shortcut.
+  KO: (a) airgap 저장소에서 `harness-dist/` 를 통째로 삭제한다(이 저장소는 하네스의 소비자이지
+  배포자가 아니다) 및 H 자신의 템플릿에 남은 그 디렉토리 이름에 대한 참조 2곳을 고친다.
+  (b) `01-roles.md`(H 정본·A 프로젝트 사본 양쪽)의 R3/R4/R5 기본 모델/effort 행을 새
+  frontmatter 에 맞춘다 — Maker·Referee 는 표준 tier/medium, Critic 은 표준 tier/high +
+  고위험 시 승격 명시 문구. `03-adoption.md` 의 Referee effort 줄도 고치고, R0.3 커밋 규약
+  정본 위치 표기를 모호한 "이 파일" 대신 글로벌 CLAUDE.md 로 바꾼다. (c) 글로벌 CLAUDE.md
+  템플릿의 기계적 변경 절에 "카테고리 규칙이 이긴다"는 우선순위 문단을 추가한다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: (1) Keep `harness-dist/` and just sync it to the canonical repo — rejected: it leaves two
+  copies of the packager and source in existence, so drift recurs by construction. (2) Leave the
+  spec tables as-is and rely on the frontmatter alone — rejected: the harness's own Docs-First
+  norm means the spec wins over the implementation, so an unmatched table would get silently
+  restored on the next spec-first read.
+  KO: (1) `harness-dist/` 를 남기고 정본과 동기화만 하기 — 기각: 패키저와 소스 사본이 두 벌
+  존재하는 구조 자체가 남아 drift 가 구조적으로 재발한다. (2) 스펙 표는 그대로 두고
+  frontmatter 만 믿기 — 기각: 하네스 자신의 Docs-First 규범상 스펙이 구현을 이기므로,
+  일치하지 않는 표는 다음 스펙 우선 판독에서 조용히 되살아난다.
+- 사유 (Rationale):
+  EN: A settings change is not done while a path remains that can revert it — a working stale
+  installer, an outranking stale spec table, and an unresolved rule conflict are each such a
+  path. Closing all three, rather than the frontmatter alone, is what makes D-003 durable.
+  KO: 설정 변경은 그것을 되돌릴 수 있는 경로가 남아 있으면 완료된 것이 아니다 — 동작하는 옛
+  인스톨러, 구현을 이기는 옛 스펙 표, 미해결 규칙 충돌이 각각 그런 경로였다. frontmatter
+  만이 아니라 이 세 경로를 모두 닫아야 D-003 이 오래간다.
+- 결정자 (Decider): 사용자 (User)
+- 연결 (Links): `base/docs/harness/01-roles.md` R3·R4·R5 메타 표 · `base/docs/harness/03-adoption.md` · `base/templates/CLAUDE.harness-global.md` · [[D-003]]
