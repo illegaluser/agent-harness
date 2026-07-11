@@ -1,4 +1,29 @@
 <!-- HARNESS:BEGIN -->
+## 커밋 메시지 규약 — 한글·영문 병기
+
+모든 커밋 메시지는 **한글과 영문을 병기**한다. 한국어가 먼저이고(비개발자 독자 기준), 영문은 같은 내용을 옮긴 것이다.
+
+- **제목** — `<type>: <한국어 요약> / <English summary>`. 슬래시 하나(` / `)로 병기한다. `<type>` 은 저장소의 기존 관례(`feat` / `fix` / `docs` / `refactor` / `chore` 등)를 따른다.
+- **본문** — 한국어 항목 블록을 먼저 쓰고, `[EN]` 한 줄을 구분자로 둔 뒤, 같은 항목을 같은 순서로 영문 블록에 쓴다. 두 블록의 항목 수와 순서는 1:1 로 대응한다.
+- **문체** — 한국어는 비개발자도 이해할 쉬운 말. 영문은 같은 내용을 영어권 커밋 관례(명령형 현재시제)로 옮긴다.
+- **본문이 한 줄이면** 블록을 나누지 않고 `한국어 문장 / English sentence` 한 줄 병기로 갈음할 수 있다.
+- **구분자로 `---` 를 쓰지 않는다** — `git format-patch` / `git am` 이 `---` 로 시작하는 줄을 패치 경계로 보고 그 뒤(영문 블록 전체)를 잘라낸다. 그래서 `[EN]` 을 쓴다.
+- **`Co-Authored-By` trailer 금지.** 다른 trailer 도 사용자가 명시 요청할 때만 붙인다.
+
+예시:
+
+```text
+docs: 하네스 커밋 규약 추가 / Add harness commit convention
+
+- 5개 에이전트 정의의 커밋 규칙을 병기로 통일
+- 전역 CLAUDE.md에 동일 규칙 추가
+
+[EN]
+
+- Unify commit rules across 5 agent definitions
+- Add the same rule to the global CLAUDE.md
+```
+
 ## Subagent 위임 규칙 — Scout → Architect → Maker → Critic
 
 > 스펙 출처: 이식 대상 프로젝트의 `docs/harness/00-definition.md` · `01-roles.md` · `02-orchestration.md`
