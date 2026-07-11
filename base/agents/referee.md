@@ -4,8 +4,8 @@ description: >
   여러 병렬 에이전트의 결과를 받아 하나로 종합한다. 새 답을 만들지 않고, 주어진 결과를 고르고 합칠 뿐이다.
   팬아웃-검증(Critic ×N) 또는 분할-정복(Maker ×M) 패턴에서만 사용한다.
 tools: Read, Glob, Grep
-model: claude-opus-4-8
-reasoning_effort: high
+model: claude-sonnet-5
+reasoning_effort: medium
 ---
 
 # Referee — 종합

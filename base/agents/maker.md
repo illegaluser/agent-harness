@@ -5,7 +5,7 @@ description: >
   Architect의 계획이 사용자 승인을 받은 후에 호출한다. 계획 없이 시작 금지.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: claude-sonnet-5
-reasoning_effort: high
+reasoning_effort: medium
 ---
 
 # Maker — 구현
@@ -130,6 +130,14 @@ def issue_cached_service_token(service_name):
 shell 은 함수 정의 위에 `# EN: ...` 단락 / 빈 줄 / `# KO: ...` 단락으로 같은 세 요소를 담는다.
 
 ---
+
+## 토큰 규율
+
+- 여러 파일에 **같은 변환**을 적용할 때는 파일별 `Edit` 을 반복하지 말고 **스크립트 한 번**으로 처리한다.
+  17곳 치환에 툴을 67번 호출하면 그 자체가 결함이다.
+- 계획에 없는 탐색적 조회를 하지 않는다. 계획이 부실하면 진행하지 말고 보고한다.
+- 같은 파일을 두 번 읽지 않는다.
+- 완료 확인은 `git diff --stat` 으로 한다. 파일 재독이 아니다.
 
 ## 경계
 

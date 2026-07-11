@@ -126,3 +126,64 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   동기화 경로가 된다(멱등·백업·`--uninstall` 로 되돌림 가능).
 - 결정자 (Decider): 사용자 (User)
 - 연결 (Links): `base/templates/CLAUDE.harness-global.md` · `base/docs/harness/01-roles.md` R0.3 · `base/agents/*.md` R0.3
+
+## D-003 · Cut harness token usage via risk-based routing, model tiers, and tool-call discipline / 위험도 기반 라우팅·모델 등급·툴 호출 규율로 하네스 토큰 소비 절감 — 2026-07-12
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: A single-line documentation-string substitution applied across a fixed set of files
+  consumed 241k sub-agent tokens in one run. The root cause was not risk level but the routing
+  rule itself — the pipeline (Scout→Architect→Maker→Critic) fired based on how many files were
+  touched rather than whether any design judgment was actually needed, and no agent definition
+  placed a discipline on tool-call count, so Maker replayed the same transform file-by-file via
+  67 individual `Edit` calls instead of one script.
+  KO: 고정된 파일 집합에 문서 문자열 한 줄을 치환하는 작업 하나가 한 실행에서 서브에이전트
+  토큰 241k를 소비했다. 근본 원인은 위험도가 아니라 라우팅 규칙 자체였다 — 파이프라인
+  (Scout→Architect→Maker→Critic)이 실제로 설계 판단이 필요한지가 아니라 몇 개 파일을
+  건드리는지로 발동했고, 어떤 에이전트 정의에도 툴 호출 횟수에 대한 규율이 없어서
+  Maker가 같은 변환을 스크립트 한 번이 아니라 파일별 `Edit` 67회로 재생했다.
+- 결정 (Decision):
+  EN: Switch the routing rule from file-count to risk/design-judgment — skip Architect for
+  mechanical changes (one transform, no new behavior/interface/dependency, one-`git revert`
+  reversible) and go straight Scout→Maker→Critic, but require Scout first whenever the target
+  list is uncertain. Lower the Critic default model to `claude-sonnet-5` and escalate to
+  `claude-opus-4-8` only for a named high-risk list (auth/secrets/external-LLM paths, build/CI/
+  deploy/hook/launcher scripts, execution-topology or external-system integration changes,
+  costly-to-revert changes). Lower Maker's default effort to medium and Referee to
+  sonnet-5/medium. Add an explicit tool-call discipline block to the Maker and Critic agent
+  definitions: one script per multi-file transform, verification from `git diff`/`git show`
+  rather than re-reading whole files, no duplicate confirmations.
+  KO: 라우팅 규칙을 파일 개수 기준에서 위험도·설계 판단 기준으로 바꾼다 — 기계적 변경(단일
+  변환, 새 동작·인터페이스·의존성 없음, `git revert` 한 번으로 원복)은 Architect 를 생략하고
+  Scout→Maker→Critic 로 바로 가되, 대상 목록이 불확실하면 반드시 Scout 를 먼저 부른다.
+  Critic 기본 모델을 `claude-sonnet-5` 로 낮추고, 지정된 고위험 목록(인증·비밀정보·외부
+  LLM 호출 경로, build/CI/배포/훅/launcher 스크립트, 실행 토폴로지·외부 시스템 연동 변경,
+  되돌리기 비용이 큰 변경)에만 `claude-opus-4-8` 로 올린다. Maker 기본 effort 를 medium 으로,
+  Referee 를 sonnet-5/medium 으로 낮춘다. Maker·Critic 에이전트 정의에 명시적 툴 호출 규율
+  블록을 추가한다 — 다중 파일 변환은 스크립트 한 번, 검증은 파일 전체 재독이 아니라
+  `git diff`/`git show` 에서 시작, 같은 사실의 중복 재확인 금지.
+- 대안·기각 (Alternatives · Rejected):
+  EN: (1) Add a separate `critic-deep` agent for high-risk verification — rejected: it breaks
+  the fixed 5-role invariant (Scout/Architect/Maker/Critic/Referee) that the harness's write/
+  verify separation depends on. (2) Lower model tiers only, without touching routing or tool-call
+  discipline — rejected: the 241k spend was driven mainly by call count (67 `Edit` calls for one
+  transform), not by which model answered each call, so a model-only fix would leave most of the
+  cost in place.
+  KO: (1) 고위험 검증용 별도 `critic-deep` 에이전트 추가 — 기각: 하네스의 write/verify
+  분리가 의존하는 고정 5역할 불변식(Scout/Architect/Maker/Critic/Referee)을 훼손한다.
+  (2) 라우팅·툴 호출 규율은 손대지 않고 모델 등급만 낮추기 — 기각: 241k 소비의 주 원인은
+  어느 모델이 응답했는지가 아니라 호출 횟수(변환 하나에 `Edit` 67회)였으므로, 모델만
+  낮추면 비용 대부분이 그대로 남는다.
+- 사유 (Rationale):
+  EN: File count is a poor proxy for risk — a 17-file rename and a 1-file auth-flow change are
+  not equivalent, and routing on the wrong axis both over-invokes Architect for trivial work and
+  under-scrutinizes genuinely risky single-file changes. Tool-call count is a direct, observable
+  cost driver independent of model choice, so it needs its own explicit rule rather than being
+  left to each agent's judgment call by call.
+  KO: 파일 개수는 위험도의 부실한 대리 지표다 — 17개 파일 이름 변경과 1개 파일 인증 흐름
+  변경은 동등하지 않고, 잘못된 축으로 라우팅하면 사소한 작업에 Architect 를 과호출하면서
+  동시에 진짜 위험한 단일 파일 변경은 덜 검토하게 된다. 툴 호출 횟수는 모델 선택과
+  무관하게 직접 관측 가능한 비용 요인이므로, 매 호출마다 각 에이전트의 임기응변에
+  맡기지 않고 명시적 규칙으로 못박을 필요가 있다.
+- 결정자 (Decider): 사용자 (User)
+- 연결 (Links): `base/templates/CLAUDE.harness-global.md` · `base/agents/maker.md` · `base/agents/critic.md` · `base/agents/referee.md`

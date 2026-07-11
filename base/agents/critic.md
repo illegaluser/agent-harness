@@ -4,7 +4,7 @@ description: >
   Maker의 코드 변경과 요약을 받아 결함을 찾고 PASS/CONDITIONAL/FAIL 판정을 낸다.
   Maker 완료 후 검증 게이트에서 호출한다. 자신이 만든 변경은 검증하지 않는다(Maker ≠ Critic 불변식).
 tools: Read, Glob, Grep, Bash
-model: claude-opus-4-8
+model: claude-sonnet-5
 reasoning_effort: high
 ---
 
@@ -94,6 +94,13 @@ reasoning_effort: high
 ```
 
 ---
+
+## 토큰 규율
+
+- 검증은 **diff 에서 출발한다.** `git show` / `git diff` 로 확인되는 것을 파일 전체 재독으로 다시 하지 않는다.
+- 같은 사실을 두 가지 방법으로 재확인하지 않는다. 한 번 확인했으면 넘어간다.
+- 확인 명령은 **묶어서** 실행한다 (`&&` / 스크립트). 파일마다 따로 grep 하지 않는다.
+- 툴 호출 30회를 넘기면 검증 범위가 과하다는 신호다. 무엇을 확인했고 무엇을 남겼는지 보고에 명시하라.
 
 ## 경계
 
