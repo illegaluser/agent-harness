@@ -1,0 +1,76 @@
+<!-- HARNESS:BEGIN -->
+## Subagent 위임 규칙 — Scout → Architect → Maker → Critic (프로젝트 오버라이드)
+
+`.claude/agents/` 에 이 프로젝트가 오버라이드한 scout/architect/maker/critic 정의가 있으면 그것이
+전역(`~/.claude/agents/`)보다 우선 적용된다(`docs/harness/03-adoption.md` A3 우선순위 규칙). referee
+는 별도 프로젝트 오버라이드가 없으면 전역 정의(`~/.claude/agents/referee.md`)를 그대로 상속한다.
+
+**불변식 (프로젝트가 풀 수 없음):** write 는 오직 maker 만 한다. 자기 산출물을 자기가 최종 검증하지
+않는다(maker ≠ critic). 게이트 없는 상태 전이는 없다.
+
+### 이 프로젝트가 추가하는 파이프라인 발동 카테고리
+
+전역 기본 카테고리(신규 모듈/아키텍처 변경, 신규 테스트 슈트, launcher/CI/배포 스크립트 수정, 토폴로지
+변경, 외부 시스템 연동, 의존성 버전 핀 변경, 보안/약관 영향)에 더해 이 프로젝트가 추가로 지정하는
+카테고리:
+
+{{PROJECT_SPECIFIC_TRIGGER_CATEGORIES}}
+<!-- 예: 특정 launcher 스크립트 경로, 이 프로젝트 고유 외부 시스템(DB/큐/LLM provider) 연동 지점,
+     이 프로젝트가 핀 고정한 의존성 등을 여기 나열한다. 없으면 "없음 — 전역 기본값만 사용"으로 채운다. -->
+
+### 파이프라인을 건너뛰는 케이스 (직접 처리)
+
+- 1~2 개 파일의 명확한 버그 수정 / 오타 / 문서 단순 갱신
+- 사용자가 이미 구체적 코드 변경 위치/내용을 지시한 경우
+- lint 만 정리하는 작업
+- 단, 위 경우에도 변경 후 critic 단독 호출은 **권장** (사용자가 빠르게 끝내라고 명시한 경우 면제)
+
+### 패턴 라우팅 — 무엇을 팬아웃할까
+
+- **런타임 표면 있는 코드 변경(문서·주석·순수 리네임 제외)** 의 기본 검증 = **팬아웃-검증**
+  (critic ×N → referee 종합, N=3, 기본이 정확성/보안/회귀 3렌즈 분산 — 동일 클론이 아니다). 재호출
+  트리거는 **referee 종합 판정 FAIL** — 개별 critic 하나가 FAIL 이어도 종합이 PASS/CONDITIONAL 이면
+  재호출 아님.
+- **순수 문서·주석·리네임 변경** = **순차 게이트** (단일 critic).
+- 고위험 코드(결제·인증·보안·마이그레이션)는 팬아웃에 **적대적 검증**을 중첩한다.
+- **maker는 이 팬아웃의 대상이 아니다** — 팬아웃되는 건 critic뿐. maker를 여러 인스턴스로 병렬
+  복제하는 건 대규모 분할-정복(worktree 격리) 예외 상황에서만 허용된다.
+
+### 에이전트별 경계 (위반하면 즉시 멈춤)
+
+- scout — 판단·권고·파일 수정 금지. read-only.
+- architect — 코드 작성·파일 수정 금지. read-only.
+- maker — 승인된 계획서 없이 시작 금지. 3개 파일 이상 변경하는데 계획서가 없으면 architect 호출 안내
+  후 멈춤.
+- critic — 코드 수정 금지. 발견·판정·보고만. 자기가 만든 변경 검증 금지.
+- referee — 새 작업·새 코드 생성 금지. 팬아웃/분할 패턴에서만 사용.
+
+수동 호출은 `@agent-scout` / `@agent-architect` / `@agent-maker` / `@agent-critic` / `@agent-referee`
+로 명시.
+
+### 의사결정 로그 위치
+
+기본값 `docs/DECISIONS.md`(`harness-dist/base/templates/DECISIONS.seed.md`로 시드됨)를 그대로 쓰면
+이 항목은 생략 가능. 바꿀 경우에만 실제 경로를 명시: {{DECISIONS_LOG_PATH}}
+
+### Claude Code 훅 — 자기신고 마커의 기계적 이중화 (설치했다면)
+
+`.claude/settings.json` 의 `hooks` 블록이 `.claude/hooks/{inject-repo-facts,lint-gate}.sh`
+를 세션 이벤트에 배선한다(설치 여부는 `install-harness.sh` 실행 로그로 확인). 이 훅들은 아래 자기신고
+마커를 **대체하지 않고 이중화**한다.
+
+- `inject-repo-facts.sh` (SessionStart/SubagentStart) — `.claude/agents/_repo-facts.md` 를 세션
+  컨텍스트에 자동 주입.
+- `lint-gate.sh` (PostToolUse 는 비차단, Stop/SubagentStop 은 최대 3회 유한 차단) — dirty `*.py`/`*.md`
+  lint. 린터 바이너리(ruff/markdownlint-cli2)가 PATH 에 없으면 self-degrade 로 항상 통과 — 설치
+  전까지는 의도적 inert 상태.
+- **승인 게이트는 훅이 아니라 Claude Code 네이티브 + 오케스트레이터 시퀀싱으로 집행한다.** 사용자
+  대면 승인 = 메인 세션 Plan Mode의 ExitPlanMode(1차, AskUserQuestion·대화 승인 fallback). 집행 =
+  오케스트레이터가 사용자 승인 전에는 maker를 소환하지 않는다. 승인 마커 파일·bypass env는 없다.
+- `docs/DECISIONS.md` append 는 훅이 자동으로 쓰지 않는다 — **오케스트레이터(메인 세션 또는
+  Workflow)가 승인 게이트·검증 게이트를 닫을 때마다 `DECISION_LOG: D-NNN appended` 또는
+  `DECISION_LOG: skip — <사유>`(사유는 no-new-decision / duplicate / pipeline-skipped 중 하나로 한정)
+  를 출력**해야 게이트가 닫힌다 — `REPO_FACTS_LOADED`와 동형의 자기신고 강제
+  (`docs/harness/02-orchestration.md` O0). append-only 무결성을 위해 내용 자동생성은 하지 않고
+  마커로만 집행한다.
+<!-- HARNESS:END -->
