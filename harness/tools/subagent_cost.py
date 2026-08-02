@@ -44,7 +44,7 @@ def load_run(jsonl_path):
     tool_calls = 0
     timestamps = []
 
-    with open(jsonl_path, "r") as fh:
+    with open(jsonl_path, "r", errors="replace") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -52,6 +52,9 @@ def load_run(jsonl_path):
             try:
                 record = json.loads(line)
             except (ValueError, TypeError):
+                skipped += 1
+                continue
+            if not isinstance(record, dict):
                 skipped += 1
                 continue
 
@@ -125,7 +128,11 @@ def collect(session_id=None):
         if not os.path.isfile(jsonl_path):
             continue
 
-        metrics, skipped = load_run(jsonl_path)
+        try:
+            metrics, skipped = load_run(jsonl_path)
+        except Exception:
+            total_skipped += 1
+            continue
         total_skipped += skipped
         if metrics is None:
             continue
@@ -136,7 +143,8 @@ def collect(session_id=None):
 
 
 def pctl(values, p):
-    """EN/KO: nearest-rank percentile, no extra deps beyond statistics/sorted list."""
+    """EN/KO: linear-interpolation-free rounded-rank percentile
+    (round(p/100*(n-1))), no extra deps beyond statistics/sorted list."""
     if not values:
         return 0
     ordered = sorted(values)
