@@ -808,6 +808,67 @@ def test_subagent_stop_does_not_reset_write_budget():
         shutil.rmtree(root)
 
 
+def test_close_gate_waits_for_running_subagents():
+    """
+    EN: A background subagent that is still running must defer the close gate
+        instead of tripping it blind — the gate cannot demand a verdict on
+        work that has not finished. The deferral is not an exemption: it must
+        still block once the running subagent count drops back to 0 with no
+        verifier having run, and a SubagentStop count must never push the
+        counter negative and accidentally grant a permanent deferral.
+    KO: 아직 실행 중인 백그라운드 서브에이전트가 있으면 close 게이트가 모르고
+        차단하는 대신 유예해야 한다 — 끝나지 않은 작업에 판정을 요구할 수 없다.
+        유예는 면제가 아니다 — 실행 중 카운트가 0으로 돌아왔는데 검증자가 안
+        돌았으면 그때는 차단돼야 하고, SubagentStop 카운트가 음수로 내려가
+        영구 유예를 만들어서도 안 된다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        stop(root, event="SubagentStart", agent_id="a1")
+        run(root, write_payload(root, "base/w1.md", actor="sub"))
+        check("running subagent defers the close gate", not blocked(stop(root)[1]))
+
+        stop(root, event="SubagentStop", agent_type="maker", agent_id="a1")
+        check("the deferral is not an exemption", blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+    root = make_repo(ENFORCING)
+    try:
+        stop(root, event="SubagentStart", agent_id="a1")
+        run(root, write_payload(root, "base/w2.md", actor="sub"))
+        stop(root, event="SubagentStop", agent_type="critic", agent_id="a1")
+        check("a verifier finishing still releases", not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+    root = make_repo(ENFORCING)
+    try:
+        stop(root, event="SubagentStart", agent_id="a1")
+        stop(root, event="SubagentStart", agent_id="a2")
+        run(root, write_payload(root, "base/w3.md", actor="sub"))
+        stop(root, event="SubagentStop", agent_type="maker", agent_id="a1")
+        check("two running subagents both counted", not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+    root = make_repo(ENFORCING)
+    try:
+        stop(root, event="SubagentStop", agent_type="maker", agent_id="a1")
+        stop(root, event="SubagentStop", agent_type="maker", agent_id="a2")
+        run(root, write_payload(root, "base/w4.md", actor="sub"))
+        check("counter never goes negative", blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/w5.md"))
+        check("no delegation is unaffected", not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
 def test_close_gate_off_when_not_enforcing():
     root = make_repo(dict(ENFORCING, enforce=False))
     try:
@@ -972,6 +1033,50 @@ def test_session_start_sweeps_dead_turn_state():
         check("stale turn state is swept at session start", not os.path.exists(dead))
         check("live turn state is left alone",
               len([f for f in os.listdir(sdir) if f.startswith("gate-")]) == 1)
+    finally:
+        shutil.rmtree(root)
+
+
+def spawn_turn(root, subagent_type, turn):
+    return run(root, {
+        "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": turn,
+        "cwd": root, "tool_name": "Agent", "tool_use_id": "tu-1",
+        "tool_input": {"subagent_type": subagent_type, "prompt": "..."},
+    })
+
+
+def test_null_turn_state_does_not_outlive_the_turn():
+    """
+    EN: A counter file first created by an event with no prompt_id (e.g.
+        SubagentStart) is stored with turn: null. If that null is never
+        promoted, the file stays turn-less for as long as it exists, and a
+        Stop that deferred or blocked (both keep the file) hands the next
+        user turn the previous turn's approval and spent write budget. The
+        first payload that does carry a turn id must promote the stored null
+        to that id so the turn boundary still exists for later turns.
+    KO: prompt_id 가 없는 이벤트(SubagentStart 등)가 처음 만든 카운터 파일은
+        turn: null 로 저장된다. 이 null 을 승격시키지 않으면 파일이 사는 내내
+        턴이 없는 상태가 되고, 유예하거나 차단한 Stop(둘 다 파일을 남긴다) 다음의
+        새 턴이 이전 턴의 승인과 소진된 쓰기 예산을 그대로 물려받는다. 턴 id 를
+        실은 첫 페이로드가 저장된 null 을 그 id 로 승격시켜야 이후 턴에도 턴
+        경계가 살아 있다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        stop(root, event="SubagentStart", agent_id="a1")
+        approve(root)
+        for i in (1, 2):
+            run(root, write_payload(root, "base/u%d.md" % i))
+        run(root, write_payload(root, "base/u3.md", actor="sub"))
+
+        check("the turn that opened with a null turn id still defers",
+              not blocked(stop(root)[1]))
+
+        code, _, _ = run(root, write_payload(root, "base/u4.md", turn="t2"))
+        check("a new turn gets a fresh write budget", code == 0)
+
+        code, _, _ = spawn_turn(root, "maker", "t2")
+        check("a new turn requires fresh approval", code == 2)
     finally:
         shutil.rmtree(root)
 
