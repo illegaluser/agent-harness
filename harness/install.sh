@@ -96,15 +96,38 @@ except FileNotFoundError:
 with open(src_block, "r", encoding="utf-8") as f:
     block = f.read()
 
-has_begin = begin in text
-has_end = end in text
+# EN: Count, don't just test presence. `text.index()` finds the FIRST marker, so
+#     a file that merely *quotes* the marker in prose above the real block would
+#     have everything between the quote and the real END deleted. Counting here —
+#     before anything is written — is what makes the "we never touch anything
+#     outside the markers" contract true. The post-hoc count in
+#     verify_install_global runs after the mv, i.e. after the damage.
+# KO: 존재 여부가 아니라 개수를 센다. `text.index()` 는 **첫** 마커를 찾으므로, 진짜
+#     블록 위 산문에서 마커를 단지 *인용*한 파일은 그 인용부터 진짜 END 까지가 통째로
+#     지워진다. 아무것도 쓰기 전에 여기서 세는 것이 "마커 밖은 절대 건드리지 않는다"는
+#     계약을 참으로 만든다. verify_install_global 의 사후 개수 검사는 mv 뒤에,
+#     즉 이미 지워진 뒤에 돈다.
+n_begin = text.count(begin)
+n_end = text.count(end)
 
-if has_begin != has_end:
+if n_begin != n_end:
     sys.stderr.write(
-        "ERROR: %s has only one of %s / %s. Aborting — fix by hand.\n"
-        % (target, begin, end)
+        "ERROR: %s has %d %s and %d %s — they must be paired. "
+        "Aborting without touching the file; fix it by hand.\n"
+        % (target, n_begin, begin, n_end, end)
     )
     sys.exit(3)
+
+if n_begin > 1:
+    sys.stderr.write(
+        "ERROR: %s has %d harness blocks (or quotes the markers in its text). "
+        "Aborting without touching the file — leave exactly one pair, or remove "
+        "the quoted occurrences, then re-run.\n" % (target, n_begin)
+    )
+    sys.exit(3)
+
+has_begin = n_begin == 1
+has_end = n_end == 1
 
 new_block = begin + "\n" + block.rstrip("\n") + "\n" + end
 
