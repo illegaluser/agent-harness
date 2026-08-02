@@ -526,6 +526,55 @@ def test_bash_known_misses():
         shutil.rmtree(root)
 
 
+def test_bash_marker_is_the_command_not_a_flag():
+    """
+    EN: A write marker only counts as one when it is the command. `--rm` is a flag,
+        `pip install` is a subcommand, and `bash x/install.sh` merely runs a file —
+        none of them write to a product path. Blocking them once made the harness's
+        own installer unrunnable from a main thread.
+    KO: 쓰기 마커는 그것이 명령일 때만 마커다. `--rm` 은 플래그, `pip install` 은
+        하위명령, `bash x/install.sh` 는 파일을 실행할 뿐 — 셋 다 산출물에 쓰지 않는다.
+        이것들을 막았을 때 하네스 자기 설치기를 메인 스레드에서 돌릴 수 없었다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+        allowed = [
+            ("running an install.sh is not installing onto it",
+             "bash base/install.sh /tmp/target"),
+            ("running install.sh by path is allowed",
+             "./base/install.sh /tmp/target"),
+            ("--uninstall does not read as the install command",
+             "bash base/install.sh --uninstall /tmp/target"),
+            ("pip install with a product requirements file allowed",
+             "pip install -r base/requirements.txt"),
+            ("npm install pointed at a product dir allowed",
+             "npm install --prefix base/x"),
+            ("a --rm flag is not the rm command",
+             "docker run --rm -v ./base:/data img"),
+        ]
+        for name, command in allowed:
+            p["tool_input"] = {"command": command}
+            check(name, run(root, p)[0] == 0)
+
+        blocked = [
+            ("coreutils install to a product file DENIED",
+             "install -m 644 /tmp/x base/f.md"),
+            ("coreutils install by absolute path DENIED",
+             "/usr/bin/install -m 644 /tmp/x base/f.md"),
+            ("rm by absolute path DENIED", "/bin/rm -f base/f.md"),
+            ("tee by absolute path DENIED", "echo x | /usr/bin/tee base/f.md"),
+        ]
+        for name, command in blocked:
+            p["tool_input"] = {"command": command}
+            check(name, run(root, p)[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
 def test_bash_cd_argument_forms():
     """
     EN: `cd` tracking must not depend on how the path is spelled. Quoting a path

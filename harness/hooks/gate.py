@@ -77,12 +77,16 @@ SPAWN_TOOLS = ("Agent", "Task")
 #     `(?:^|\s)` 가 아니라 `\b` 를 쓴다 — 전자는 단어 앞이 `/`인 절대경로 호출
 #     (`/usr/bin/sed`, `/bin/rm`)을 놓쳤다. `\b` 는 `/usr/bin/sed` 도 매치하면서
 #     (`/` 에서 경계 성립) `used`/`confirm` 은 여전히 제외한다(단어 문자끼리는 경계가 없다).
+#     `(?<!-)` keeps a flag from being read as the command: `docker run --rm` names
+#     no file to delete, and blocking it blocked ordinary container work.
+# KO(cont): `(?<!-)` 는 플래그가 명령으로 읽히지 않게 한다 — `docker run --rm` 은 지울
+#     파일을 지목하지 않는데, 이것을 막으면 평범한 컨테이너 작업이 막혔다.
 ARG_WRITE_MARKERS = (
-    r"\bsed\s+[^\n]*-\w*i",
-    r"\bperl\s+[^\n]*-\w*i",
-    r"\btee\b",
-    r"\brm\b",
-    r"\brmdir\b",
+    r"(?<!-)\bsed\s+[^\n]*-\w*i",
+    r"(?<!-)\bperl\s+[^\n]*-\w*i",
+    r"(?<!-)\btee\b",
+    r"(?<!-)\brm\b",
+    r"(?<!-)\brmdir\b",
 )
 
 # EN: Writers whose target is the LAST path-shaped argument in the segment —
@@ -91,10 +95,20 @@ ARG_WRITE_MARKERS = (
 # KO: 대상이 세그먼트의 '마지막' 경로 모양 인자인 쓰기 명령. cp/mv/install 은
 #     원본(들) 다음에 목적지가 오므로 목적지만 대상이다 — 원본을 덮어쓴다고
 #     오판하지 않는다.
+#     `install` is anchored to the start of the segment and must be the whole word:
+#     coreutils `install` is the command itself, whereas `pip install` / `npm install`
+#     are subcommands that write nothing here, and `bash harness/install.sh` merely
+#     *runs* a file named install.sh. Both were blocked — the second made the
+#     harness's own installer unrunnable from a main thread.
+# KO(cont): `install` 은 세그먼트 맨 앞에 오고 낱말 전체여야 한다. coreutils 의
+#     `install` 은 명령 자신이지만 `pip install`·`npm install` 은 여기서 아무것도 쓰지
+#     않는 하위명령이고, `bash harness/install.sh` 는 install.sh 라는 파일을 *실행*할
+#     뿐이다. 둘 다 막혔었다 — 뒤엣것 때문에 하네스 자기 설치기를 메인 스레드에서
+#     돌릴 수 없었다.
 LAST_TOKEN_WRITE_MARKERS = (
-    r"\bcp\b",
-    r"\bmv\b",
-    r"\binstall\b",
+    r"(?<!-)\bcp\b",
+    r"(?<!-)\bmv\b",
+    r"^\s*(?:\S*/)?install(?=\s|$)",
 )
 
 # EN: `>`/`>>` with an optional fd number or `&`, optional `|` (noclobber override)
@@ -345,11 +359,10 @@ def bash_targets(command, root, cfg):
         base/f.md`, which does not delete the file. Static text cannot tell
         `docker rm base` from `rm base`, and the cost of an over-block (use
         Edit, or delegate to a subagent) is not symmetric with the cost of a
-        miss (an irreversible tree deletion). Also: `docker run --rm -v
-        ./base:/data img` is blocked because `\brm\b` matches the `--rm` flag
-        itself, not a target; and `pip install -r base/requirements.txt` is
-        blocked because `\binstall\b` treats a read-only argument as a
-        destination.
+        miss (an irreversible tree deletion). Two former over-blocks are gone:
+        a marker now has to *be* the command, so `docker run --rm` (a flag),
+        `pip install -r base/x.txt` (a subcommand) and `bash base/install.sh`
+        (running a file) all pass.
     KO: '대상'만 센다. 리다이렉트는 대상을 지목하고, sed -i·perl -i·tee·rm·rmdir 는
         인자가 대상이라 같은 세그먼트의 경로 모양 토큰을 전부 검사한다("경로처럼
         생겼나" 사전 필터 없음 — 맨 단어가 그 자체로 산출물 디렉터리일 수 있다.
@@ -387,10 +400,9 @@ def bash_targets(command, root, cfg):
         (docker/npm/podman)과, 파일을 지우지 않는 `git rm --cached base/f.md`.
         정적 텍스트로는 `docker rm base` 와 `rm base` 를 구분할 수 없고, 과차단의
         대가(Edit 사용, 또는 서브에이전트 위임)는 미탐의 대가(되돌릴 수 없는 트리
-        삭제)와 대칭이 아니다. 또한: `docker run --rm -v ./base:/data img` 는
-        `\\brm\\b` 가 대상이 아닌 `--rm` **플래그** 자체에 걸려 차단되고,
-        `pip install -r base/requirements.txt` 는 `\\binstall\\b` 가 읽기 전용
-        인자를 목적지로 봐서 차단된다.
+        삭제)와 대칭이 아니다. 과차단 두 건은 없어졌다: 이제 마커는 그것이 명령
+        *자신*일 때만 마커이므로 `docker run --rm`(플래그) · `pip install -r
+        base/x.txt`(하위명령) · `bash base/install.sh`(파일 실행) 는 전부 통과한다.
     """
     candidates = []
     cwd = root
