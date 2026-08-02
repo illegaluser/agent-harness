@@ -1,6 +1,8 @@
 # 하네스 코어
 
 이 문서가 하네스의 전부다. 여기 없는 것은 하네스가 아니다.
+소스 파일은 `CORE.md` · `hooks/gate.py` · `tests/test_gate.py` · `tools/subagent_cost.py` ·
+`agents/` 5개 · `install.sh` 다.
 
 **설계 원칙 — 집행할 수 없는 규칙은 쓰지 않는다.** 못 쓰겠으면 `조언` 으로 표시하고 코어 밖에 둔다.
 아래 모든 규칙에는 집행 주체가 붙어 있다. 붙일 수 없으면 그 규칙은 여기 있으면 안 된다.
@@ -18,8 +20,9 @@
 - `기계` scout · architect · critic · referee 는 `tools:` 에 `Write`/`Edit` 가 없다. 파일을 못 쓴다.
 - `기계` 메인 스레드가 한 턴에 직접 고칠 수 있는 산출물 파일은 `main_thread_file_limit` 개까지다.
   초과분은 maker 에 위임해야 한다. 문턱은 "1~2 개는 직접, 3 개째부터는 계획"에서 유도했다.
-- `기계` 메인 스레드가 Bash 우회(`sed -i` · `perl -i` · 리다이렉트 · `tee`)로 산출물을 고치는 것도 막는다.
-  `tools:` 로는 표현할 수 없는 경로라 훅이 맡는다.
+- `기계` 메인 스레드가 Bash 우회(`sed -i` · `perl -i` · 리다이렉트 · `tee` · `rm` · `rmdir` · `cp` ·
+  `mv` · `install`)로 산출물을 고치는 것도 막는다. `tools:` 로는 표현할 수 없는 경로라 훅이 맡는다.
+  알려진 미탐이 있다 — 목록은 `gate.py` 의 `bash_targets` docstring.
 - 산출물의 정의는 프로젝트가 [`.claude/harness.json`](../.claude/harness.json) 의 `product` 에 선언한다.
   확장자가 아니라 경로다 — 이 저장소의 산출물은 코드가 아니라 문서다.
 

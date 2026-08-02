@@ -345,7 +345,11 @@ def bash_targets(command, root, cfg):
         base/f.md`, which does not delete the file. Static text cannot tell
         `docker rm base` from `rm base`, and the cost of an over-block (use
         Edit, or delegate to a subagent) is not symmetric with the cost of a
-        miss (an irreversible tree deletion).
+        miss (an irreversible tree deletion). Also: `docker run --rm -v
+        ./base:/data img` is blocked because `\brm\b` matches the `--rm` flag
+        itself, not a target; and `pip install -r base/requirements.txt` is
+        blocked because `\binstall\b` treats a read-only argument as a
+        destination.
     KO: '대상'만 센다. 리다이렉트는 대상을 지목하고, sed -i·perl -i·tee·rm·rmdir 는
         인자가 대상이라 같은 세그먼트의 경로 모양 토큰을 전부 검사한다("경로처럼
         생겼나" 사전 필터 없음 — 맨 단어가 그 자체로 산출물 디렉터리일 수 있다.
@@ -383,7 +387,10 @@ def bash_targets(command, root, cfg):
         (docker/npm/podman)과, 파일을 지우지 않는 `git rm --cached base/f.md`.
         정적 텍스트로는 `docker rm base` 와 `rm base` 를 구분할 수 없고, 과차단의
         대가(Edit 사용, 또는 서브에이전트 위임)는 미탐의 대가(되돌릴 수 없는 트리
-        삭제)와 대칭이 아니다.
+        삭제)와 대칭이 아니다. 또한: `docker run --rm -v ./base:/data img` 는
+        `\\brm\\b` 가 대상이 아닌 `--rm` **플래그** 자체에 걸려 차단되고,
+        `pip install -r base/requirements.txt` 는 `\\binstall\\b` 가 읽기 전용
+        인자를 목적지로 봐서 차단된다.
     """
     candidates = []
     cwd = root
@@ -620,6 +627,7 @@ def resolve_subagent_jsonl(payload):
     agent_id = payload.get("agent_id")
     if not transcript_path or not agent_id:
         return None
+    agent_id = os.path.basename(agent_id)
     base_dir = os.path.dirname(transcript_path)
     session_name = os.path.splitext(os.path.basename(transcript_path))[0]
     subagents_dir = os.path.join(base_dir, session_name, "subagents")

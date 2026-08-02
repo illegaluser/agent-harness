@@ -35,7 +35,7 @@
 게이트를 건드리면 반드시:
 
 ```bash
-python3 harness/tests/test_gate.py     # 49 tests
+python3 harness/tests/test_gate.py     # 142 tests
 ```
 
 양방향이 다 통과해야 한다 — 메인을 막는 것과 서브에이전트를 **막지 않는** 것.
@@ -45,10 +45,11 @@ python3 harness/tests/test_gate.py     # 49 tests
 
 1. **`effort` 키 수정 12곳이 미검증이다.** `base/agents/*.md` 와 `~/.claude/agents/*.md` 의
    `reasoning_effort:` → `effort:` 치환. Critic 호출이 중단돼 판정을 못 받았다.
-2. **서브에이전트 내부 비용에 상한이 없다.** 이번 세션에 scout 하나가 116K 토큰·26분을 썼다.
-   전체 툴 호출 계측은 켜 뒀으니(`harness-metrics.jsonl`), 데이터가 쌓이면 문턱을 근거로 정할 것.
+2. **서브에이전트 내부 비용에 문턱을 만들지 않기로 결정했다(D-006).** 546런 실측으로 scout
+   중앙값은 90,062 — 이전에 적었던 "scout 하나가 116K 토큰" 이상치 진술은 반증됐다.
+   근거는 `docs/DECISIONS.md` D-006.
 3. **`base/` 옛 하네스가 그대로 있다.** 새 하네스가 실사용 검증되면 삭제 대상.
-4. **배포 경로가 없다.** 새 하네스를 다른 프로젝트에 설치하는 스크립트를 아직 안 만들었다.
+4. **배포 경로가 생겼다.** `harness/install.sh` 로 다른 프로젝트에 설치·언인스톨한다.
 
 ## 배경
 

@@ -308,7 +308,8 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   grew between planning and this write (n +1~+2); the max values match exactly. (4) Correction:
   the state note in `.claude/harness-facts.md` claiming "one scout run spent 116K tokens" as an
   outlier is refuted by this data — scout's `ctx_peak` median is 90,062, so 116K sits inside the
-  normal range, not above it.
+  normal range, not above it. All figures above are a snapshot taken at record time — the corpus
+  keeps growing, so a later run of `subagent_cost.py` will show different numbers.
   KO: (1) wall-clock 상한을 만들지 않는다. 로컬 실측 최대 24,173초가 관측되나, 이 필드는
   유휴 시간과 실제 작업 시간이 섞여 있고 데이터에 둘을 분리할 필드가 없다. (2) 토큰 상한을
   만들지 않는다. 서브에이전트 자기 실행 중 걸리는 유일한 훅 지점은 그 내부의
@@ -322,7 +323,8 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   어긋나는 것은 계획 수립 시점 이후 코퍼스가 늘었기 때문이며(n +1~+2), 최대값은 정확히
   일치한다. (4) 정정 기록: `.claude/harness-facts.md` 의 "scout 하나가 116K 토큰을 썼다"는
   이상치 진술은 이 데이터로 반증됐다 — scout `ctx_peak` 중앙값이 90,062이므로 116K 는 정상
-  범위 안이지 이상치가 아니다.
+  범위 안이지 이상치가 아니다. 위 수치는 전부 기록 시점 스냅샷이다 — 코퍼스가 계속 늘어나므로
+  나중에 `subagent_cost.py` 를 다시 돌리면 다른 값이 나온다.
 - 대안·기각 (Alternatives · Rejected):
   EN: Enforce a hard wall-clock or token cap on sub-agents anyway, on the theory that an
   approximate signal beats none — rejected. The harness's own founding principle (`harness/
