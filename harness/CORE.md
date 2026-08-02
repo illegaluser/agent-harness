@@ -2,7 +2,7 @@
 
 이 문서가 하네스의 전부다. 여기 없는 것은 하네스가 아니다.
 소스 파일은 `CORE.md` · `hooks/gate.py` · `tests/test_gate.py` · `tools/subagent_cost.py` ·
-`agents/` 5개 · `install.sh` 다.
+`agents/` 5개 · `global/CLAUDE.harness.md` · `install.sh` 다.
 
 **설계 원칙 — 집행할 수 없는 규칙은 쓰지 않는다.** 못 쓰겠으면 `조언` 으로 표시하고 코어 밖에 둔다.
 아래 모든 규칙에는 집행 주체가 붙어 있다. 붙일 수 없으면 그 규칙은 여기 있으면 안 된다.
@@ -80,6 +80,9 @@
 구분자로 `---` 를 쓰지 않는다(`git am` 이 뒤를 잘라낸다). `Co-Authored-By` 금지.
 
 ## 6. 이 하네스를 고칠 때
+
+전역 설정은 손으로 고치지 않는다. `harness/global/CLAUDE.harness.md` 를 고치고
+`harness/install.sh --global` 로 반영한다.
 
 게이트를 바꾸면 [`tests/test_gate.py`](tests/test_gate.py) 를 돌려라.
 

@@ -55,12 +55,80 @@ usage() {
 Usage:
   harness/install.sh <target-project-dir>
   harness/install.sh --uninstall <target-project-dir>
+  harness/install.sh --global              # 설치·갱신
+  harness/install.sh --global --uninstall  # 제거
 EOF
 }
 
 log() { printf '%s\n' "$*" >&2; }
 
 epoch_now() { date +%s; }
+
+# EN: The literal marker lines in ~/.claude/CLAUDE.md that bracket the
+#     harness-managed block. Everything outside them is the user's own
+#     personal instructions and must never be touched.
+# KO: ~/.claude/CLAUDE.md 에서 하네스가 관리하는 블록을 감싸는 마커 줄 그대로.
+#     그 밖은 사용자가 직접 쓴 개인 지침이므로 절대 건드리지 않는다.
+MARKER_BEGIN='<!-- HARNESS:BEGIN -->'
+MARKER_END='<!-- HARNESS:END -->'
+
+# EN: Replace (or, if absent, append) the HARNESS:BEGIN/END block in $target
+#     with the contents of $src_block, writing the result to $out. $target is
+#     never modified in place — the caller decides whether to mv $out over it.
+#     Exits 3 if only one marker is present, or if BEGIN comes after END.
+# KO: $target 의 HARNESS:BEGIN/END 블록을 $src_block 내용으로 치환(없으면
+#     append)해 $out 에 쓴다. $target 자체는 건드리지 않는다 — 덮어쓸지는
+#     호출자가 mv 로 결정한다. 마커가 한쪽만 있거나 BEGIN 이 END 뒤에 있으면
+#     exit 3.
+merge_marker_block() {
+    local target="$1" src_block="$2" out="$3"
+    python3 - "$target" "$src_block" "$out" "$MARKER_BEGIN" "$MARKER_END" <<'PYEOF'
+import sys
+
+target, src_block, out, begin, end = sys.argv[1:6]
+
+try:
+    with open(target, "r", encoding="utf-8") as f:
+        text = f.read()
+except FileNotFoundError:
+    text = ""
+
+with open(src_block, "r", encoding="utf-8") as f:
+    block = f.read()
+
+has_begin = begin in text
+has_end = end in text
+
+if has_begin != has_end:
+    sys.stderr.write(
+        "ERROR: %s has only one of %s / %s. Aborting — fix by hand.\n"
+        % (target, begin, end)
+    )
+    sys.exit(3)
+
+new_block = begin + "\n" + block.rstrip("\n") + "\n" + end
+
+if has_begin and has_end:
+    start = text.index(begin)
+    finish = text.index(end) + len(end)
+    if start > finish:
+        sys.stderr.write(
+            "ERROR: %s has BEGIN after END. Aborting — fix by hand.\n" % target
+        )
+        sys.exit(3)
+    text = text[:start] + new_block + text[finish:]
+else:
+    if text:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += "\n" + new_block + "\n"
+    else:
+        text = new_block + "\n"
+
+with open(out, "w", encoding="utf-8") as f:
+    f.write(text)
+PYEOF
+}
 
 # EN: Fail fast and loud if jq is missing — never edit JSON with sed.
 # KO: jq 가 없으면 즉시 중단 — JSON 을 sed 로 편집하지 않는다.
@@ -289,6 +357,181 @@ verify_install() {
     return "$failed"
 }
 
+# EN: Verify the result of do_install_global (exit != 0 on any failure):
+#     both markers appear exactly once, the block byte-matches the source, and
+#     all 5 role files under ~/.claude/agents byte-match harness/agents/*.md.
+# KO: do_install_global 결과를 검증한다(실패 시 exit != 0): 마커 2개가 각각
+#     정확히 1번, 블록이 소스와 바이트 동일, ~/.claude/agents 의 역할 5개가
+#     harness/agents/*.md 와 바이트 동일.
+verify_install_global() {
+    local target="$HOME/.claude/CLAUDE.md"
+    local failed=0
+
+    local begin_count end_count
+    begin_count="$(grep -c -F "$MARKER_BEGIN" "$target" || true)"
+    end_count="$(grep -c -F "$MARKER_END" "$target" || true)"
+    if [ "$begin_count" -eq 1 ] && [ "$end_count" -eq 1 ]; then
+        log "검증 OK: 마커가 각각 정확히 1개"
+    else
+        log "검증 FAIL: BEGIN $begin_count 개, END $end_count 개 (기대: 각 1개)"
+        failed=1
+    fi
+
+    local extracted="$target.extract-$$"
+    TMP_FILES+=("$extracted")
+    python3 - "$target" "$MARKER_BEGIN" "$MARKER_END" "$extracted" <<'PYEOF'
+import sys
+
+target, begin, end, out = sys.argv[1:5]
+with open(target, "r", encoding="utf-8") as f:
+    text = f.read()
+start = text.index(begin) + len(begin)
+finish = text.index(end)
+block = text[start:finish].strip("\n") + "\n"
+with open(out, "w", encoding="utf-8") as f:
+    f.write(block)
+PYEOF
+    if cmp -s "$extracted" "$HARNESS_SRC/global/CLAUDE.harness.md"; then
+        log "검증 OK: 블록 내용이 소스와 바이트 동일"
+    else
+        log "검증 FAIL: 블록 내용이 소스와 다르다"
+        failed=1
+    fi
+
+    local name
+    local agents_ok=1
+    for name in "${AGENT_NAMES[@]}"; do
+        if ! cmp -s "$HARNESS_SRC/agents/$name.md" "$HOME/.claude/agents/$name.md"; then
+            log "검증 FAIL: $name.md 가 소스와 다르다"
+            failed=1
+            agents_ok=0
+        fi
+    done
+    if [ "$agents_ok" -eq 1 ]; then
+        log "검증 OK: 에이전트 5개가 소스와 바이트 동일"
+    fi
+
+    return "$failed"
+}
+
+# EN: Install/update the harness-managed block of the user's global
+#     ~/.claude/CLAUDE.md and the 5 role definitions under ~/.claude/agents/,
+#     as real files (not symlinks — a global setting must survive this repo
+#     moving or changing branch). Order is fixed: backup, then copy agents,
+#     then merge the marker block, then verify.
+# KO: 사용자 전역 ~/.claude/CLAUDE.md 의 하네스 관리 블록과 ~/.claude/agents/
+#     아래 역할 정의 5개를 실파일로(심링크 아님 — 전역 설정은 이 저장소가
+#     옮겨지거나 브랜치가 바뀌어도 살아남아야 한다) 설치·갱신한다. 순서 고정:
+#     백업 → 에이전트 복사 → 마커 블록 병합 → 검증.
+do_install_global() {
+    local epoch
+    epoch="$(epoch_now)"
+    local global_claude="$HOME/.claude/CLAUDE.md"
+    local global_agents_dir="$HOME/.claude/agents"
+
+    mkdir -p "$HOME/.claude"
+
+    # 1. Backup first — git 밖이라 git revert 로 복구되지 않는다.
+    if [ -f "$global_claude" ]; then
+        cp "$global_claude" "$global_claude.bak-$epoch" || {
+            log "ERROR: backup of $global_claude failed. Aborting — nothing changed."
+            exit 1
+        }
+        log "backed up existing $global_claude -> $global_claude.bak-$epoch"
+    fi
+    if [ -d "$global_agents_dir" ]; then
+        cp -R "$global_agents_dir" "$global_agents_dir.bak-$epoch" || {
+            log "ERROR: backup of $global_agents_dir failed. Aborting — nothing changed."
+            exit 1
+        }
+        log "backed up existing $global_agents_dir -> $global_agents_dir.bak-$epoch"
+    fi
+
+    # 2. Copy the 5 role definitions as real files.
+    mkdir -p "$global_agents_dir"
+    local name
+    for name in "${AGENT_NAMES[@]}"; do
+        copy_with_backup "$HARNESS_SRC/agents/$name.md" "$global_agents_dir/$name.md" "$epoch"
+    done
+
+    # 3. Merge the HARNESS marker block. $global_claude itself is untouched
+    #    unless the merge succeeds.
+    local merged="$global_claude.tmp-$$"
+    TMP_FILES+=("$merged")
+    if ! merge_marker_block "$global_claude" "$HARNESS_SRC/global/CLAUDE.harness.md" "$merged"; then
+        log ""
+        log "수동 절차: $global_claude 에서 $MARKER_BEGIN / $MARKER_END 마커를 직접 확인해 고치세요."
+        log "           (한쪽만 있거나 순서가 뒤집혀 있으면 자동 병합을 하지 않습니다.)"
+        exit 1
+    fi
+    mv "$merged" "$global_claude"
+
+    # 4. Verify.
+    verify_install_global
+}
+
+# EN: Remove the HARNESS marker block (markers included) from ~/.claude/CLAUDE.md,
+#     leaving everything outside it byte-for-byte intact, and delete only the
+#     role files under ~/.claude/agents that still byte-match this repo's
+#     source — a file the user hand-edited stays. Backups are never deleted.
+# KO: ~/.claude/CLAUDE.md 에서 HARNESS 마커 블록을 마커 줄 포함 제거하고 그
+#     밖은 그대로 두며, ~/.claude/agents 아래 역할 파일 중 이 저장소 소스와
+#     여전히 바이트 동일한 것만 지운다 — 사용자가 손으로 고친 파일은 남는다.
+#     백업은 지우지 않는다.
+do_uninstall_global() {
+    local global_claude="$HOME/.claude/CLAUDE.md"
+    local global_agents_dir="$HOME/.claude/agents"
+
+    if [ -f "$global_claude" ]; then
+        local begin_count end_count
+        begin_count="$(grep -c -F "$MARKER_BEGIN" "$global_claude" || true)"
+        end_count="$(grep -c -F "$MARKER_END" "$global_claude" || true)"
+        if [ "$begin_count" -eq 1 ] && [ "$end_count" -eq 1 ]; then
+            local out="$global_claude.tmp-$$"
+            TMP_FILES+=("$out")
+            python3 - "$global_claude" "$MARKER_BEGIN" "$MARKER_END" "$out" <<'PYEOF'
+import sys
+
+target, begin, end, out = sys.argv[1:5]
+with open(target, "r", encoding="utf-8") as f:
+    text = f.read()
+start = text.index(begin)
+finish = text.index(end) + len(end)
+before = text[:start].rstrip("\n")
+after = text[finish:]
+if after.startswith("\n"):
+    after = after[1:]
+if before and after:
+    text = before + "\n\n" + after
+elif before:
+    text = before + "\n"
+else:
+    text = after
+with open(out, "w", encoding="utf-8") as f:
+    f.write(text)
+PYEOF
+            mv "$out" "$global_claude"
+            log "removed HARNESS marker block from $global_claude (content outside markers preserved)"
+        elif [ "$begin_count" -eq 0 ] && [ "$end_count" -eq 0 ]; then
+            log "$global_claude has no HARNESS marker block — nothing to remove."
+        else
+            log "ERROR: $global_claude has BEGIN $begin_count / END $end_count — only one marker present."
+            log "       Aborting — fix by hand."
+            exit 1
+        fi
+    fi
+
+    local name
+    for name in "${AGENT_NAMES[@]}"; do
+        local f="$global_agents_dir/$name.md"
+        if [ -f "$f" ] && cmp -s "$HARNESS_SRC/agents/$name.md" "$f"; then
+            rm -f "$f"
+        fi
+    done
+
+    log "global harness backups (CLAUDE.md.bak-* / agents.bak-*) left in place."
+}
+
 do_install() {
     local target="$1"
     local epoch
@@ -367,6 +610,15 @@ do_uninstall() {
 }
 
 main() {
+    if [ "${1:-}" = "--global" ]; then
+        if [ "${2:-}" = "--uninstall" ]; then
+            do_uninstall_global
+            exit 0
+        fi
+        do_install_global
+        exit 0
+    fi
+
     if [ "${1:-}" = "--uninstall" ]; then
         [ -n "${2:-}" ] || { usage; exit 1; }
         do_uninstall "$2"
