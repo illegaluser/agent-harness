@@ -207,6 +207,128 @@ def test_bash_bypass():
         shutil.rmtree(root)
 
 
+def test_bash_write_targets_blocked():
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {"command": "echo x > base/f.md"}
+        check("redirect truncate DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cat a >> base/f.md"}
+        check("redirect append DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "tee base/f.md < x"}
+        check("tee with stdin redirect DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "python3 -c 'print(1)' > base/f.md"}
+        check("python -c into a product file DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cat > base/f.md <<EOF\nhi\nEOF"}
+        check("heredoc after redirect DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cat <<'EOF' > base/f.md\nhi\nEOF"}
+        check("redirect after heredoc DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": 'echo "$(date)" > base/f.md'}
+        check("command substitution in redirect DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": 'echo x > "base/f.md"'}
+        check("quoted redirect target DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo hi>base/f.md"}
+        check("redirect without space DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "perl -pi -e 's/a/b/' base/f.md"}
+        check("perl in-place DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cat x | tee -a base/f.md"}
+        check("pipe into tee -a DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo x > ./base/f.md"}
+        check("./-prefixed target DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "grep -rn foo . ; echo x > base/f.md"}
+        check("write in a later segment DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo x 2> base/f.md"}
+        check("fd-numbered redirect DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo x &> base/f.md"}
+        check("&> redirect DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo x >| base/f.md"}
+        check("noclobber override DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo a > base/f.md; echo b >> base/f.md"}
+        code, _, err = run(root, p)
+        check("duplicate targets named once (exit)", code == 2, "exit=%d" % code)
+        check("duplicate targets named once (dedup)", err.count("base/f.md") == 1,
+              repr(err))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_bash_read_only_allowed():
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {
+            "command": 'grep -rn "reasoning_effort:\\|^effort:" base/agents/*.md '
+                       'base/x/*.md ~/.claude/agents/*.md 2>/dev/null | sed "s\\|$HOME\\|~\\|"'
+        }
+        check("real false positive #1", run(root, p)[0] == 0)
+
+        p["tool_input"] = {
+            "command": "grep -rn \"reasoning_effort:\" base/agents base/x "
+                       "/Users/x/.claude/agents 2>/dev/null"
+        }
+        check("real false positive #2", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "cat base/f.md | head -20"}
+        check("cat a product file into a pager", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "python3 base/tests/t.py"}
+        check("run a script that lives in a product dir", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "wc -l base/*.md > /tmp/out.txt"}
+        check("redirect to a non-product path", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "ls base/ 2>&1 | head"}
+        check("stderr merge is not a target", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "diff base/a.md base/b.md > /tmp/d.txt"}
+        check("diff of product files to /tmp", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "git diff base/ > /tmp/x.patch"}
+        check("git diff to /tmp", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "echo done > /dev/null"}
+        check("/dev/null is not a product", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "for f in base/*.md; do echo $f; done"}
+        check("glob loop over product files", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "test -f base/f.md && echo yes"}
+        check("test -f on a product file", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "echo x > base/EXEMPT.md"}
+        check("exempt file may be written", run(root, p)[0] == 0)
+
+        p["agent_id"] = "agent-abc"
+        p["tool_input"] = {"command": "echo x > base/f.md"}
+        check("subagent redirect into a product file allowed", run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
 def test_observe_mode_never_denies():
     root = make_repo(dict(ENFORCING, enforce=False))
     try:

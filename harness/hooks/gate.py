@@ -36,6 +36,7 @@ the installed Claude Code binary, 2026-08-02):
 import fnmatch
 import json
 import os
+import re
 import sys
 import time
 
@@ -64,14 +65,28 @@ DEFAULTS = {
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 SPAWN_TOOLS = ("Agent", "Task")
 
-# EN: Bash escape hatches that write files without going through Write/Edit.
-# KO: Write/Edit 를 거치지 않고 파일을 쓰는 Bash 우회 경로.
-BASH_WRITE_MARKERS = (
-    r"\bsed\s+[^|;&]*-\w*i",
-    r"\bperl\s+[^|;&]*-\w*i",
-    r"\btee\b",
-    r">>?",
+# EN: Writers whose target is an argument, not a redirect. A segment matching one
+#     of these makes every path-shaped token *in that segment* a candidate target.
+# KO: 대상이 리다이렉트가 아니라 인자인 쓰기 명령. 세그먼트가 이 중 하나에 매치되면
+#     그 세그먼트 안의 경로 모양 토큰 전부가 후보 대상이 된다.
+ARG_WRITE_MARKERS = (
+    r"(?:^|\s)sed\s+[^\n]*-\w*i",
+    r"(?:^|\s)perl\s+[^\n]*-\w*i",
+    r"(?:^|\s)tee\b",
 )
+
+# EN: `>`/`>>` with an optional fd number or `&`, optional `|` (noclobber override)
+#     and optional opening quote, capturing only the target word. `2>&1` cannot
+#     match — `&` is not in the target class, so it names no file.
+# KO: 앞에 fd 번호나 `&`, 뒤에 `|`(noclobber)·따옴표가 붙을 수 있는 `>`/`>>` 와 그 대상.
+#     `2>&1` 은 매치되지 않는다 — `&` 가 대상 문자 집합에 없어 파일을 지목하지 않는다.
+REDIRECT_RE = re.compile(r"(?<![<>&])(?:[0-9]+|&)?>>?\|?\s*[\"']?([A-Za-z0-9_./~-]+)")
+
+# EN: Command separators. A `|` right after `>` is the noclobber form, not a pipe.
+# KO: 명령 구분자. `>` 바로 뒤의 `|` 는 파이프가 아니라 noclobber 표기다.
+SEGMENT_RE = re.compile(r"\|\||&&|(?<!>)[|;&\n]")
+
+PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./~-]+")
 
 
 def repo_root():
@@ -201,24 +216,38 @@ def deny(message):
     sys.exit(2)
 
 
+def resolve_target(root, token):
+    """EN/KO: token -> absolute path. `~` expands; a relative token resolves under root."""
+    t = os.path.expanduser(token) if token.startswith("~") else token
+    return t if os.path.isabs(t) else os.path.join(root, t)
+
+
 def bash_targets(command, root, cfg):
     """
-    EN: Cheap, deliberately conservative: only if the command looks like it
-        writes at all do we bother extracting path-shaped tokens and testing
-        them against the product globs. Misses exotic bypasses by design —
-        this is a runaway guard, not a sandbox.
-    KO: 일부러 보수적이고 싸게 만들었다. 쓰기처럼 보이는 명령일 때만 경로 모양 토큰을 뽑아
-        product 글롭에 대본다. 별난 우회는 놓친다 — 이건 샌드박스가 아니라 폭주 방지 장치다.
+    EN: Only *targets* count. A redirect names its target; sed -i / perl -i / tee
+        name theirs as arguments, so for those we test every path-shaped token in
+        the same segment. Path tokens elsewhere — grep sources, `2>/dev/null` —
+        are not targets and no longer trip the gate. Still not a sandbox: writes
+        from inside python/git/cp are invisible to a static scan, by design.
+    KO: '대상'만 센다. 리다이렉트는 대상을 지목하고, sed -i·perl -i·tee 는 인자가
+        대상이라 같은 세그먼트의 경로 모양 토큰을 전부 검사한다. 그 밖의 경로 토큰
+        (grep 인자, `2>/dev/null`)은 대상이 아니므로 더는 걸리지 않는다. 샌드박스는
+        아니다 — python/git/cp 내부의 쓰기는 정적 검사로 보이지 않으며 그것이 설계다.
     """
-    import re
-
-    if not any(re.search(m, command) for m in BASH_WRITE_MARKERS):
-        return []
+    candidates = []
+    for seg in SEGMENT_RE.split(command):
+        if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
+            candidates.extend(PATH_TOKEN_RE.findall(seg))
+        candidates.extend(REDIRECT_RE.findall(seg))
     hits = []
-    for token in re.findall(r"[A-Za-z0-9_./~-]+", command):
-        if "." in token or "/" in token:
-            if is_product(root, cfg, os.path.join(root, token.lstrip("./"))):
-                hits.append(rel_path(root, os.path.join(root, token.lstrip("./"))))
+    for token in candidates:
+        if "." not in token and "/" not in token:
+            continue
+        path = resolve_target(root, token)
+        if is_product(root, cfg, path):
+            rel = rel_path(root, path)
+            if rel not in hits:      # dedup here, so bash_gate's join stays 1:1 with files
+                hits.append(rel)
     return hits
 
 
