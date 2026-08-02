@@ -11,7 +11,7 @@
 | 걸리는 일 | 결과 |
 | --- | --- |
 | 메인 스레드가 한 턴에 산출물 파일 3개째 수정 | `PreToolUse` exit 2 로 차단 |
-| 메인 스레드가 Bash(`sed -i`·리다이렉트·`tee`)로 산출물 수정 | 차단 |
+| 메인 스레드가 Bash(`sed -i`·`perl -i`·리다이렉트·`tee`·`rm`·`rmdir`·`cp`·`mv`·`install`)로 산출물 수정 | 차단 (알려진 미탐 있음 — `gate.py` 의 `bash_targets` docstring) |
 | 승인(`ExitPlanMode` 수락) 없이 `maker` 스폰 | 차단 |
 | 위임이 일어난 턴에 `critic` 없이 종료 | `Stop` 차단, **2회 상한 후 통과** |
 
@@ -24,18 +24,32 @@
 
 ## 규칙 본문
 
-[`harness/CORE.md`](../harness/CORE.md) 가 전부다. 80줄이고 규칙마다 `기계`/`조언` 이 붙어 있다.
+[`harness/CORE.md`](../harness/CORE.md) 가 전부다. 규칙마다 `기계`/`조언` 이 붙어 있다.
 `기계` 는 어길 수 없고, `조언` 은 아무것도 확인하지 않는다. 그 구분이 이 하네스의 설계 원칙이다.
 
 역할 정의는 [`harness/agents/`](../harness/agents/) 5개이며 `.claude/agents/` 에 **심링크**돼 있다
 (사본이 아니라 드리프트가 원리적으로 불가능).
+
+## 전역 설정도 하네스가 관리한다
+
+`~/.claude/CLAUDE.md` 의 `HARNESS:BEGIN`/`END` 블록과 `~/.claude/agents/` 5개는
+[`harness/global/CLAUDE.harness.md`](../harness/global/CLAUDE.harness.md) 와
+[`harness/agents/`](../harness/agents/) 가 정본이다.
+
+**손으로 고치지 마라.** 정본을 고치고 아래로 반영한다:
+
+```bash
+bash harness/install.sh --global              # 전역 설치·갱신
+bash harness/install.sh --global --uninstall  # 전역 제거
+bash harness/install.sh <프로젝트경로>          # 대상 프로젝트에 설치
+```
 
 ## 고칠 때
 
 게이트를 건드리면 반드시:
 
 ```bash
-python3 harness/tests/test_gate.py     # 142 tests
+python3 harness/tests/test_gate.py     # 152 tests
 ```
 
 양방향이 다 통과해야 한다 — 메인을 막는 것과 서브에이전트를 **막지 않는** 것.
@@ -46,9 +60,11 @@ python3 harness/tests/test_gate.py     # 142 tests
 1. **서브에이전트 내부 비용에 문턱을 만들지 않기로 결정했다(D-006).** 546런 실측으로 scout
    중앙값은 90,062 — 이전에 적었던 "scout 하나가 116K 토큰" 이상치 진술은 반증됐다.
    근거는 `docs/DECISIONS.md` D-006.
-2. **배포 경로가 생겼다.** `harness/install.sh` 로 다른 프로젝트에 설치·언인스톨한다.
-3. **lint 게이트에 대응하는 것이 새 하네스에 없다.** 옛 하네스의 lint 게이트 훅 기능이
+2. **lint 게이트에 대응하는 것이 새 하네스에 없다.** 옛 하네스의 lint 게이트 훅 기능이
    대체되지 않았다. 필요하면 별도 건으로 다시 만들어야 한다.
+3. **close 게이트가 백그라운드 서브에이전트 실행 중에 발동한다.** 서브에이전트가 아직
+   도는데 메인 턴이 끝나면 "미검증"으로 차단된다 — 게이트가 서브에이전트 생사를 모른다.
+   `SubagentStart` − `SubagentStop` 카운트로 유예하는 안이 있으나 미구현.
 
 ## 배경
 

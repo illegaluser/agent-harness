@@ -125,7 +125,8 @@ git 밖이라 `git grep` 에 안 잡히지만 모든 세션에 주입된다. 하
 ### 검증 등급 — Critic 모델 오버라이드 (`조언`)
 
 Critic 기본은 `harness/agents/critic.md` 의 frontmatter 값(`claude-sonnet-5` / `effort: high`)이다.
-다음 중 하나라도 해당하면 **모델을 상위 티어로 올려서** 호출한다:
+다음 중 하나라도 해당하면 **`model: claude-opus-5` · `effort: xhigh`** 로 올려서 호출한다.
+`critic.md` 와 같은 값이다 — 검증 여부가 아니라 **강도**를 조절하는 것이다:
 
 - 인증·인가, 비밀정보 취급, 외부 LLM 호출 경로
 - `build.sh` / CI / 배포 / git hook / launcher 스크립트 / **하네스 자체**
