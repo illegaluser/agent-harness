@@ -90,7 +90,15 @@ python3 harness/tests/test_gate.py     # 152 tests
    내용이 같아도 매번 `.bak-<epoch>` 생성해 무한 누적(N4) — 넷 다 고쳤다.
    `resolve_if_symlink()` 가 W3·W4 를 심링크 물리 경로 해석으로, `require_python3()` 가
    W5 를 사전 차단으로, `agents_dir_unchanged()` + 백업을 `mv` 직전으로 이동한 것이 N4 를
-   해결한다. 신규 `harness/tests/test_install_global.sh` 9 케이스로 검증(`mktemp -d` `HOME`
+   해결한다. 1차 검증에서 Critic(opus)이 CONDITIONAL 을 냈고, 남은 WARNING 4건도
+   2차에서 전부 처리했다: `copy_with_backup()` 자체에 `resolve_if_symlink()` 를 적용해
+   개별 파일 심링크(디렉터리는 실디렉터리, 파일 5개가 각각 dotfiles 로 흘러가는 구성)도
+   백업 없이 사라지지 않게 했다(W-2). 백업이 해석된 물리 경로 옆(dotfiles 디렉터리 안)에
+   생긴다는 사실과 `git add -A` 로 통째로 커밋될 수 있다는 함의를 문서화했다(W-3).
+   `CORE.md` §6 을 정본 저장소로 한정해 설치된 프로젝트에서 죽은 링크·불가능한 명령을
+   지시하던 문제를 고쳤다(W-1, `install.sh` 는 `HARNESS_FILES` 에 없어 설치되지 않는다).
+   케이스 7 에 백업 개수 0 단언을 추가해 가짜 통과를 없앴다(W-4). 신규
+   `harness/tests/test_install_global.sh` **12 케이스**로 검증(`mktemp -d` `HOME`
    오버라이드만 사용, 실제 `$HOME` 은 안 건드림). 근거는 `docs/DECISIONS.md` D-007.
 
 ## critic 이 남긴 것 (2026-08-03, opus)

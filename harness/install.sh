@@ -237,19 +237,29 @@ resolve_if_symlink() {
 
 # EN: Copy a source file over a target path, snapshotting any pre-existing target
 #     file to <path>.bak-<epoch> first. The installer must never silently destroy
-#     something the project already had there.
+#     something the project already had there. If $dst is itself a symlink (e.g.
+#     an individual role file routed through a dotfiles repo), it is resolved to
+#     its physical target via resolve_if_symlink() first (D1) — the write lands
+#     on the real file and the symlink itself is never touched, so it survives.
+#     A dangling symlink aborts inside resolve_if_symlink(), matching D1.
 # KO: 소스 파일을 대상 경로에 복사하되, 기존 파일이 있으면 먼저 <path>.bak-<epoch>
-#     로 떠 둔다. 설치기가 프로젝트에 이미 있던 것을 조용히 없애서는 안 된다.
+#     로 떠 둔다. 설치기가 프로젝트에 이미 있던 것을 조용히 없애서는 안 된다. $dst
+#     자체가 심링크(예: dotfiles 저장소로 흘려보내는 개별 역할 파일)면 먼저
+#     resolve_if_symlink() 로 물리 경로를 구한다(D1) — 쓰기는 실파일에 떨어지고
+#     심링크 자신은 건드리지 않아 그대로 남는다. 끊긴 심링크는 resolve_if_symlink()
+#     안에서 중단된다(D1 과 동일).
 copy_with_backup() {
     local src="$1" dst="$2" epoch="$3"
-    if [ -e "$dst" ] || [ -L "$dst" ]; then
-        if ! cmp -s "$src" "$dst" 2>/dev/null; then
-            cp -P "$dst" "$dst.bak-$epoch"
-            log "backed up existing $dst -> $dst.bak-$epoch"
+    local resolved
+    resolved="$(resolve_if_symlink "$dst")"
+    if [ -e "$resolved" ]; then
+        if ! cmp -s "$src" "$resolved" 2>/dev/null; then
+            cp -P "$resolved" "$resolved.bak-$epoch"
+            log "backed up existing $resolved -> $resolved.bak-$epoch"
         fi
     fi
-    rm -f "$dst"
-    cp "$src" "$dst"
+    rm -f "$resolved"
+    cp "$src" "$resolved"
 }
 
 install_files() {

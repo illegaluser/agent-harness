@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# EN: Regression tests for harness/install.sh's --global path (W3/W4/W5/N4 fix).
-#     Every case runs the real installer against a throwaway $HOME made with
-#     mktemp -d — the actual $HOME is never touched. Run:
+# EN: Regression tests for harness/install.sh's --global path (W3/W4/W5/N4 fix,
+#     plus W-2: per-file symlink resolution in copy_with_backup). Every case runs
+#     the real installer against a throwaway $HOME made with mktemp -d — the
+#     actual $HOME is never touched. Run:
 #       bash harness/tests/test_install_global.sh
-# KO: harness/install.sh 의 --global 경로 회귀 테스트 (W3/W4/W5/N4 수정 검증).
-#     각 케이스는 mktemp -d 로 만든 일회용 $HOME 을 대상으로 실제 설치기를
-#     돌린다 — 실제 $HOME 은 절대 건드리지 않는다. 실행:
+# KO: harness/install.sh 의 --global 경로 회귀 테스트 (W3/W4/W5/N4 수정 + W-2:
+#     copy_with_backup 의 파일 단위 심링크 해석 검증). 각 케이스는 mktemp -d 로
+#     만든 일회용 $HOME 을 대상으로 실제 설치기를 돌린다 — 실제 $HOME 은 절대
+#     건드리지 않는다. 실행:
 #       bash harness/tests/test_install_global.sh
 set -u
 
@@ -234,6 +236,8 @@ case7() {
         fail "$label" "expected non-zero exit on a dangling symlink"
     elif [ "$(cat "$h/.claude/CLAUDE.md")" != "user prose only" ]; then
         fail "$label" "CLAUDE.md was touched despite the abort"
+    elif [ "$(count_direct "$h/.claude" '*.bak-*')" != "0" ]; then
+        fail "$label" "a backup was made despite the abort"
     else
         pass "$label"
     fi
@@ -297,6 +301,78 @@ case9() {
     rm -rf "$h"
 }
 
+# --- Case 10: each agent file individually symlinked, content identical (W-2) --
+case10() {
+    local label='10 에이전트 개별 심링크 — 내용 동일 (W-2)'
+    local h name
+    h="$(new_home)"
+    mkdir -p "$h/dotfiles" "$h/.claude/agents"
+    for name in "${AGENT_NAMES[@]}"; do
+        cp "$HARNESS_DIR/agents/$name.md" "$h/dotfiles/$name.md"
+        ln -s "$h/dotfiles/$name.md" "$h/.claude/agents/$name.md"
+    done
+
+    local rc
+    rc="$(run_install "$h" --global)"
+    if [ "$rc" != "0" ]; then
+        fail "$label" "exit $rc: $(cat "$h/.install-out")"
+        rm -rf "$h"
+        return
+    fi
+
+    local link_ok=1
+    for name in "${AGENT_NAMES[@]}"; do
+        [ -L "$h/.claude/agents/$name.md" ] || link_ok=0
+    done
+
+    if [ "$link_ok" != "1" ]; then
+        fail "$label" "at least one agent symlink was replaced with a real file"
+    elif ! agents_match_source "$h/dotfiles"; then
+        fail "$label" "dotfiles originals do not byte-match source"
+    elif [ "$(count_direct "$h/dotfiles" '*.bak-*')" != "0" ]; then
+        fail "$label" "unexpected backup next to the resolved dotfiles path"
+    elif [ "$(count_direct "$h/.claude/agents" '*.bak-*')" != "0" ]; then
+        fail "$label" "unexpected backup inside .claude/agents"
+    elif [ "$(count_direct "$h/.claude" 'agents.bak-*')" != "0" ]; then
+        fail "$label" "unexpected directory-level agents.bak-*"
+    else
+        pass "$label"
+    fi
+    rm -rf "$h"
+}
+
+# --- Case 11: same, but critic.md content differs (W-2) -------------------
+case11() {
+    local label='11 에이전트 개별 심링크 — critic.md 만 다름 (W-2)'
+    local h name
+    h="$(new_home)"
+    mkdir -p "$h/dotfiles" "$h/.claude/agents"
+    for name in "${AGENT_NAMES[@]}"; do
+        cp "$HARNESS_DIR/agents/$name.md" "$h/dotfiles/$name.md"
+        ln -s "$h/dotfiles/$name.md" "$h/.claude/agents/$name.md"
+    done
+    printf '\nCORRUPTED\n' >>"$h/dotfiles/critic.md"
+
+    local rc
+    rc="$(run_install "$h" --global)"
+    if [ "$rc" != "0" ]; then
+        fail "$label" "exit $rc: $(cat "$h/.install-out")"
+        rm -rf "$h"
+        return
+    fi
+
+    if [ ! -L "$h/.claude/agents/critic.md" ]; then
+        fail "$label" "critic.md symlink was replaced with a real file"
+    elif ! cmp -s "$HARNESS_DIR/agents/critic.md" "$h/dotfiles/critic.md"; then
+        fail "$label" "dotfiles critic.md was not updated to source content"
+    elif [ "$(count_direct "$h/dotfiles" 'critic.md.bak-*')" != "1" ]; then
+        fail "$label" "expected exactly 1 critic.md.bak-* next to the resolved dotfiles path, got $(count_direct "$h/dotfiles" 'critic.md.bak-*')"
+    else
+        pass "$label"
+    fi
+    rm -rf "$h"
+}
+
 case1
 case2
 case3a
@@ -307,6 +383,8 @@ case6
 case7
 case8
 case9
+case10
+case11
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

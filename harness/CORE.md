@@ -82,15 +82,21 @@
 ## 6. 이 하네스를 고칠 때
 
 전역 설정은 손으로 고치지 않는다. `harness/global/CLAUDE.harness.md` 를 고치고
-`harness/install.sh --global` 로 반영한다.
+`harness/install.sh --global` 로 반영한다. **`install.sh` 자신은 `HARNESS_FILES` 목록에
+없어 설치된 프로젝트로 복사되지 않는다 — 이 명령도, 아래 `test_install_global.sh` 도
+정본 저장소(`agent-harness`)에서만 성립한다. 설치된 프로젝트에는 이 파일이 없다.**
 
-게이트를 바꾸면 [`tests/test_gate.py`](tests/test_gate.py) 를 돌려라.
-`install.sh` 의 `--global` 경로를 바꾸면 [`tests/test_install_global.sh`](tests/test_install_global.sh) 도
-돌려라 — 실제 `$HOME` 은 건드리지 않고 `mktemp -d` 오버라이드로만 검증한다.
+게이트를 바꾸면(**모든 설치처**에서 돈다) [`tests/test_gate.py`](tests/test_gate.py) 를 돌려라:
 
 ```bash
 python3 harness/tests/test_gate.py
-bash harness/tests/test_install_global.sh
+```
+
+`install.sh` 의 `--global` 경로를 바꾸면(**정본 저장소에서만** 돈다) `test_install_global.sh`
+도 돌려라 — 실제 `$HOME` 은 건드리지 않고 `mktemp -d` 오버라이드로만 검증한다:
+
+```bash
+bash harness/tests/test_install_global.sh   # 12 케이스
 ```
 
 게이트는 **양쪽이 다 통과해야** 완성이다 — 메인 스레드를 막는 것과, 서브에이전트를 막지 **않는** 것.

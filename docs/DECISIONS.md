@@ -359,12 +359,23 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   or backed up only the symlink itself, not its target's content (W3). With no upfront `python3`
   check, a machine missing it hit a bare `command not found` mid-install, after files were already
   copied (W5). And every re-run created a fresh `.bak-<epoch>` even when nothing had changed (N4).
+  A subsequent Critic (opus) re-review of that first fix returned CONDITIONAL, and one of
+  the 4 WARNINGs is W-2: `copy_with_backup()` applied `resolve_if_symlink()` at the
+  directory level (whole `agents` dir as a symlink) but not at the file level. So a setup
+  where the 5 agent files are each individually symlinked to dotfiles real files (the
+  directory itself being real) still had `rm -f "$dst"` unconditionally destroy the symlink
+  and replace it with a plain file — even when content was identical, with no backup at all.
   KO: 이전 critic 검증이 `install.sh --global` 에 미해결 4건을 남겼다(W3, W4, W5, N4;
   `.claude/harness-facts.md` 의 "미완 4번"). `~/.claude/agents` 나 `~/.claude/CLAUDE.md` 가
   심링크(dotfiles 구성)면 `cp -R`/`mv` 가 심링크를 조용히 실파일/실디렉터리로 대체하거나(W4)
   심링크 자신만 백업하고 그 대상 내용은 못 담았다(W3). `python3` 사전 확인이 없어 없는 머신은
   파일이 이미 복사된 뒤에 맨 `command not found` 로 죽었다(W5). 그리고 아무것도 안 바뀌었어도
   재실행마다 새 `.bak-<epoch>` 를 만들었다(N4).
+  이 1차 수정에 대한 Critic(opus) 재검증이 CONDITIONAL 을 냈고, WARNING 4건 중 하나가
+  W-2 다: `copy_with_backup()` 은 `resolve_if_symlink()` 를 디렉터리 단위(`agents` 전체가
+  심링크인 경우)에는 적용했지만 파일 단위에는 적용하지 않았다. 그래서 에이전트 5개를
+  각각 dotfiles 실파일로 개별 심링크한 구성(디렉터리 자체는 실디렉터리)에서는 내용이
+  같아도 `rm -f "$dst"` 가 심링크를 무조건 지우고 실파일로 대체했다 — 백업조차 없이.
 - 결정 (Decision):
   EN: (1) Follow symlinks (D1). `resolve_if_symlink()` leaves a non-symlink path unchanged, resolves
   a live symlink to its physical target via `python3 -c 'import os,sys;print(os.path.realpath(...))'`,
@@ -381,9 +392,23 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   `CLAUDE.md` backup is moved to immediately before the `mv` that mutates it, gated by
   `! cmp -s "$merged" "$global_claude"`. (4) The 3 backups already on this machine
   (`CLAUDE.md.bak-1785688294`, `agents.bak-1785688294`, `agents.bak-2026-08-02`) are left in place —
-  no automated cleanup was added (D4). All of this is covered by a new 9-case
+  no automated cleanup was added (D4). All of this is covered by a new 10-case
   `harness/tests/test_install_global.sh`, isolated entirely via `HOME` overrides from `mktemp -d`;
   it never touches the real `$HOME`.
+  (5) The W-2 fix: `copy_with_backup()` itself resolves `dst` via `resolve_if_symlink()` first
+  (reusing D1's existing function, not a new idiom). So even when the target is an individual
+  file symlink (directory itself real, but each of the 5 files individually routed to a
+  dotfiles real file), the write lands on the physical path and the symlink itself is never
+  removed. This path is also crossed by project-install's (`install.sh <target>`)
+  `copy_with_backup` calls, but that `dst` is a file the installer itself created, so unless
+  the user manually symlinked it `resolve_if_symlink()` passes through unchanged (byte-identical
+  to before for the non-symlink case) — not a regression. **Where the backup lands**: in a
+  symlinked setup, `<dst>.bak-<epoch>` is created next to the *resolved physical path*, i.e.
+  inside the user's dotfiles directory, not next to the symlink — not silent (the full path is
+  printed via `log`). Since dotfiles setups are typically their own git repo, a subsequent
+  `git add -A` can sweep the whole `agents.bak-<epoch>/` (or `<file>.bak-<epoch>`) into a commit
+  — an implication worth noting when the user commits their dotfiles repo. 2 new cases (10, 11)
+  verify this, bringing the total to 12.
   KO: (1) 심링크를 따라간다(D1). `resolve_if_symlink()` 는 심링크가 아닌 경로는 그대로 두고,
   살아있는 심링크는 `python3 -c 'import os,sys;print(os.path.realpath(...))'` 로 물리 경로를 구해
   풀며, 끊긴 심링크면 아무것도 건드리기 전에 exit 1 한다. `global_claude` · `global_agents_dir`
@@ -398,9 +423,21 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   있을 수 있고 소스에는 정확히 5개뿐이기 때문)로 감쌌고, `CLAUDE.md` 백업은 그것을 변형하는
   `mv` 직전으로 옮겨 `! cmp -s "$merged" "$global_claude"` 로 감쌌다. (4) 이 머신에 이미 쌓인
   백업 3개(`CLAUDE.md.bak-1785688294`, `agents.bak-1785688294`, `agents.bak-2026-08-02`)는 그대로
-  둔다 — 자동 정리는 추가하지 않았다(D4). 이 전부를 신규 9케이스
+  둔다 — 자동 정리는 추가하지 않았다(D4). 이 전부를 신규 10케이스
   `harness/tests/test_install_global.sh` 가 덮는다 — `mktemp -d` 의 `HOME` 오버라이드로만
   격리하며 실제 `$HOME` 은 절대 건드리지 않는다.
+  (5) W-2 수정: `copy_with_backup()` 자체가 `dst` 를 `resolve_if_symlink()` 로 먼저 해석한다
+  (새 관용구가 아니라 D1 의 기존 함수 재사용). 그래서 대상이 개별 파일 심링크여도(디렉터리
+  자체는 실디렉터리인 채로 파일 5개가 각각 dotfiles 로 흘러가는 구성 포함) 쓰기는 물리
+  경로에 떨어지고 심링크 자신은 지워지지 않는다. 이 경로가 프로젝트 설치(`install.sh
+  <target>`)의 `copy_with_backup` 호출도 함께 지나가지만, 그 경로의 `dst` 는 설치기가 직접
+  만든 실파일이라 심링크가 아닌 한 `resolve_if_symlink()` 는 그대로 통과하므로(non-symlink
+  경로는 오늘과 바이트 동일) 회귀가 아니다. **백업이 생기는 위치**: 심링크 구성에서는
+  `<dst>.bak-<epoch>` 가 심링크 경로가 아니라 **해석된 물리 경로 옆**, 즉 사용자 dotfiles
+  디렉터리 안에 생긴다 — 조용하지 않다(전체 경로가 `log` 에 찍힌다). dotfiles 는 보통 그
+  자체가 git 저장소이므로, 다음 `git add -A` 한 번에 `agents.bak-<epoch>/`(또는
+  `<file>.bak-<epoch>`)가 통째로 커밋될 수 있다 — 사용자가 dotfiles 저장소를 커밋할 때
+  유의해야 하는 함의다. 신규 2케이스(10·11)로 이것을 검증한다 — 총 12개가 된다.
 - 대안·기각 (Alternatives · Rejected):
   EN: Abort the install instead of following a live symlink — rejected (D1). A user who put
   `~/.claude/agents` or `~/.claude/CLAUDE.md` under a dotfiles repo did so deliberately to route
