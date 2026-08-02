@@ -279,3 +279,70 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   사실은 검증자가 알아야 하므로 보고는 면제되지 않는다.
 - 결정자 (Decider): 사용자 (User)
 - 연결 (Links): `base/agents/maker.md` · [[D-003]]
+
+## D-006 · Record sub-agent cost, but do not enforce thresholds on it / 서브에이전트 비용을 기록하되 문턱은 만들지 않는다 — 2026-08-02
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: `harness/tools/subagent_cost.py` now aggregates 545 recorded sub-agent runs
+  (`~/.claude/projects/*/*/subagents/agent-*.jsonl`) into per-agentType `ctx_peak`/`new_tok`/
+  `out_tok`/`tool_calls`/`wall_s` statistics. The question was whether any of these five metrics
+  should become an enforced cap, given the harness's own principle that a rule without an
+  enforcement point should not be written.
+  KO: `harness/tools/subagent_cost.py` 가 기록된 서브에이전트 런 545개
+  (`~/.claude/projects/*/*/subagents/agent-*.jsonl`)를 agentType 별 `ctx_peak`/`new_tok`/
+  `out_tok`/`tool_calls`/`wall_s` 통계로 집계하게 됐다. 이 다섯 지표 중 무엇이라도 집행되는
+  상한으로 만들어야 하는지가 쟁점이었다 — "집행 지점이 없는 규칙은 쓰지 않는다"는 하네스
+  자신의 원칙이 있기 때문이다.
+- 결정 (Decision):
+  EN: (1) No wall-clock cap. A local max of 24,173s was observed, but the field mixes idle time
+  with actual work and the data has no field to separate the two. (2) No token cap. The only hook
+  point during a sub-agent's own run is its internal `PreToolUse`, and that payload carries no
+  token fields (confirmed against the hooks reference) — so any token figure is post-hoc-record
+  only, never an enforcement point. (3) No `tool_calls` cap for now — user decision: look at the
+  distribution first via `subagent_cost.py`, then revisit. Observed data (agentType: n,
+  ctx_peak median/max): scout 53, 90,062/231,919; maker 123 (plan-time snapshot: 121), 115,433/
+  518,152 (plan-time median snapshot: 119,457); critic 123 (plan-time snapshot: 122), 83,146/
+  198,133 (plan-time median snapshot: 83,334); architect 46, 90,696/272,230; referee 12, 36,993/
+  67,355. Medians for maker/critic drifted slightly from the plan's snapshot because the corpus
+  grew between planning and this write (n +1~+2); the max values match exactly. (4) Correction:
+  the state note in `.claude/harness-facts.md` claiming "one scout run spent 116K tokens" as an
+  outlier is refuted by this data — scout's `ctx_peak` median is 90,062, so 116K sits inside the
+  normal range, not above it.
+  KO: (1) wall-clock 상한을 만들지 않는다. 로컬 실측 최대 24,173초가 관측되나, 이 필드는
+  유휴 시간과 실제 작업 시간이 섞여 있고 데이터에 둘을 분리할 필드가 없다. (2) 토큰 상한을
+  만들지 않는다. 서브에이전트 자기 실행 중 걸리는 유일한 훅 지점은 그 내부의
+  `PreToolUse` 인데, 그 페이로드에는 토큰 필드가 없다(hooks 레퍼런스로 확인) — 따라서
+  어떤 토큰 수치도 사후 기록 전용이지 집행 지점이 될 수 없다. (3) `tool_calls` 캡은
+  지금 만들지 않는다 — 사용자 결정: `subagent_cost.py` 로 분포를 먼저 보고 나중에 재론한다.
+  실측(agentType: n, ctx_peak 중앙/최대): scout 53, 90,062/231,919 · maker 123(계획 당시
+  스냅샷 121), 115,433/518,152(계획 당시 중앙값 스냅샷 119,457) · critic 123(계획 당시
+  스냅샷 122), 83,146/198,133(계획 당시 중앙값 스냅샷 83,334) · architect 46, 90,696/
+  272,230 · referee 12, 36,993/67,355. maker·critic 의 중앙값이 계획 스냅샷과 소폭
+  어긋나는 것은 계획 수립 시점 이후 코퍼스가 늘었기 때문이며(n +1~+2), 최대값은 정확히
+  일치한다. (4) 정정 기록: `.claude/harness-facts.md` 의 "scout 하나가 116K 토큰을 썼다"는
+  이상치 진술은 이 데이터로 반증됐다 — scout `ctx_peak` 중앙값이 90,062이므로 116K 는 정상
+  범위 안이지 이상치가 아니다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: Enforce a hard wall-clock or token cap on sub-agents anyway, on the theory that an
+  approximate signal beats none — rejected. The harness's own founding principle (`harness/
+  CORE.md`) is that a rule without an enforcement point degrades into an ignored norm, which was
+  the exact failure mode the old `base/` harness had (10% of 183 norms mechanically enforced).
+  Writing an unenforceable cap here would reintroduce that failure inside the very tool built to
+  measure it.
+  KO: 그래도 서브에이전트에 하드 wall-clock/토큰 캡을 걸자는 안 — "근사 신호가 없는 것보단
+  낫다"는 논리. 기각. 하네스 자신의 창립 원칙(`harness/CORE.md`)이 "집행 지점 없는 규칙은
+  무시되는 규범으로 퇴화한다"는 것이고, 이는 옛 `base/` 하네스가 겪은 바로 그 실패 양상이다
+  (규범 183개 중 기계 집행 10%). 여기서 집행 불가능한 캡을 쓰면 그것을 측정하려 만든 도구
+  안에서 같은 실패를 재도입하는 것이다.
+- 사유 (Rationale):
+  EN: A threshold that cannot block anything is documentation dressed as enforcement, and the
+  harness's whole design point is to keep those two categories visibly distinct (machine vs.
+  advisory). Recording the five metrics without a cap keeps the option open once either the data
+  gains an idle-time field or a hook payload gains token fields.
+  KO: 아무것도 막을 수 없는 문턱은 집행처럼 보이는 문서일 뿐이고, 이 하네스 설계 전체의
+  요점은 그 둘(기계/조언)을 눈에 보이게 구분하는 것이다. 캡 없이 다섯 지표를 기록해 두면
+  나중에 데이터에 유휴 시간 필드가 생기거나 훅 페이로드에 토큰 필드가 생겼을 때 다시 논의할
+  여지를 남긴다.
+- 결정자 (Decider): 사용자 (User)
+- 연결 (Links): `harness/tools/subagent_cost.py` · `harness/CORE.md` · `.claude/harness-facts.md`
