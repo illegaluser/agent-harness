@@ -1,1 +1,5 @@
 build-out/
+
+# 하네스 런타임 상태 — 턴 카운터와 계측 로그. 세션마다 달라지므로 추적하지 않는다.
+# Harness runtime state — per-turn counters and the metrics log. Session-local.
+.claude/state/

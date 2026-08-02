@@ -1,0 +1,1 @@
+../../harness/agents/scout.md

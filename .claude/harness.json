@@ -1,0 +1,12 @@
+{
+  "enforce": true,
+  "product": ["base/**", "docs/**", "harness/**"],
+  "exempt": ["docs/DECISIONS.md"],
+  "main_thread_file_limit": 2,
+  "verifiers": ["critic"],
+  "write_agents": ["maker"],
+  "close_gate": true,
+  "approval_gate": true,
+  "max_close_blocks": 2,
+  "metrics": true
+}
