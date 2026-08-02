@@ -34,6 +34,7 @@ the installed Claude Code binary, 2026-08-02):
 """
 
 import fnmatch
+import importlib.util
 import json
 import os
 import re
@@ -548,6 +549,81 @@ def handle_posttooluse(root, cfg, payload):
     allow()
 
 
+def load_cost_module():
+    """
+    EN: Load harness/tools/subagent_cost.py by path, relative to this file, so
+        the SubagentStop cost record reuses the same 545-run-verified parser
+        instead of a second implementation that could drift from it. Any
+        failure (missing file, import error) yields None — callers must treat
+        that as "cost unavailable", never raise.
+    KO: `harness/tools/subagent_cost.py` 를 이 파일 기준 상대경로로 로드한다.
+        SubagentStop 의 비용 기록이 545런으로 검증된 그 파서를 재사용하게 하려는
+        것이다 — 갈라질 수 있는 두 번째 구현을 만들지 않는다. 실패(파일 없음,
+        import 오류)하면 None 을 돌려준다 — 호출부는 이를 "비용 조회 불가"로만
+        다루고 예외를 올리지 않는다.
+    """
+    try:
+        mod_path = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "..", "tools", "subagent_cost.py"
+        )
+        spec = importlib.util.spec_from_file_location("subagent_cost", mod_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def resolve_subagent_jsonl(payload):
+    """
+    EN: transcript_path -> the sibling subagents/ dir -> the one run file for
+        this agent id. Tries `agent-<id>.jsonl` then `<id>.jsonl` because
+        whether the payload's agent id already carries the `agent-` prefix
+        used in filenames is unconfirmed.
+    KO: transcript_path 에서 형제 subagents/ 디렉터리를 만들고 이 agent id 의
+        런 파일 하나를 찾는다. `agent-<id>.jsonl` 다음 `<id>.jsonl` 순으로
+        시도한다 — payload 의 agent id 가 파일명의 `agent-` 접두사를 이미
+        포함하는지 미확인이기 때문이다.
+    """
+    transcript_path = payload.get("transcript_path")
+    agent_id = payload.get("agent_id")
+    if not transcript_path or not agent_id:
+        return None
+    base_dir = os.path.dirname(transcript_path)
+    session_name = os.path.splitext(os.path.basename(transcript_path))[0]
+    subagents_dir = os.path.join(base_dir, session_name, "subagents")
+    for candidate_name in ("agent-%s.jsonl" % agent_id, "%s.jsonl" % agent_id):
+        candidate = os.path.join(subagents_dir, candidate_name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def compute_cost(payload):
+    """
+    EN: Best-effort cost lookup for a SubagentStop event. Every failure mode —
+        no transcript_path, unresolvable file, missing module, a parse error —
+        is swallowed here so the hook can never die on this path.
+    KO: SubagentStop 이벤트의 비용을 최선을 다해 찾는다. transcript_path 없음·
+        파일 미해결·모듈 없음·파싱 오류 등 모든 실패 모드를 여기서 삼켜
+        훅이 이 경로에서 절대 죽지 않게 한다.
+    """
+    agent_id_raw = payload.get("agent_id")
+    try:
+        jsonl_path = resolve_subagent_jsonl(payload)
+        if not jsonl_path:
+            return None, False, agent_id_raw
+        module = load_cost_module()
+        if module is None:
+            return None, False, agent_id_raw
+        metrics, _skipped = module.load_run(jsonl_path)
+        if metrics is None:
+            return None, False, agent_id_raw
+        return metrics, True, agent_id_raw
+    except Exception:
+        return None, False, agent_id_raw
+
+
 def handle_subagent_stop(root, cfg, payload):
     """
     EN: A verifier finishing is what satisfies the close gate. Note this must
@@ -562,13 +638,17 @@ def handle_subagent_stop(root, cfg, payload):
         cpath, state = load_turn(root, payload)
         state["verified"] = True
         write_counter(cpath, state)
+    cost, cost_resolved, agent_id_raw = compute_cost(payload)
     emit_metric(root, cfg, {
         "event": "SubagentStop",
         "session": payload.get("session_id"),
         "actor": "sub",
         "agent_type": agent_type,
+        "agent_id_raw": agent_id_raw,
         "decision": "allow",
         "reason": "verified" if agent_type in cfg.get("verifiers", []) else "subagent-stop",
+        "cost": cost,
+        "cost_resolved": cost_resolved,
     })
     allow()
 
