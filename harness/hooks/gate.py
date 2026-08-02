@@ -276,30 +276,14 @@ def read_counter(path, turn):
     EN: A stored turn is only invalidated when we can *prove* the turn changed —
         i.e. this payload carries a turn id and it differs. An absent turn id is
         not evidence of a new turn, so it inherits the stored state.
-        A stored turn of null means "created by an event that carries no
-        prompt_id" (SubagentStart, SubagentStop, or any event on a build older
-        than 2.1.196). It inherits too — but the first payload that does carry a
-        turn id writes that id in, so the null cannot outlive the turn. Without
-        that promotion the file would stay turn-less for as long as it exists,
-        and a Stop that deferred or blocked (both keep the file) would hand the
-        next user turn the previous turn's approval and spent write budget.
     KO: 저장된 턴은 바뀌었다는 것이 **증명될 때만** 무효화한다 — 이 페이로드에 턴 id 가
         있고 그것이 다를 때. 턴 id 가 없는 것은 새 턴이라는 증거가 아니므로 기존 상태를
         그대로 물려받는다.
-        저장된 턴이 null 이면 "prompt_id 를 싣지 않는 이벤트가 만든 파일"이라는 뜻이다
-        (SubagentStart·SubagentStop, 또는 2.1.196 미만 빌드의 모든 이벤트). 이것도
-        물려받되, 턴 id 를 실은 첫 페이로드가 그 id 를 적어 넣는다. 그래야 null 이 턴을
-        넘겨 살아남지 못한다. 승격하지 않으면 파일이 사는 내내 턴이 없는 상태가 되고,
-        유예하거나 차단한 Stop(둘 다 파일을 남긴다) 다음의 새 턴이 이전 턴의 승인과
-        소진된 쓰기 예산을 그대로 물려받는다.
     """
     try:
         with open(path, encoding="utf-8") as fh:
             saved = json.load(fh)
-        stored = saved.get("turn")
-        if turn is None or stored is None or stored == turn:
-            if stored is None and turn is not None:
-                saved["turn"] = turn
+        if turn is None or saved.get("turn") == turn:
             return saved
     except (OSError, ValueError):
         pass
@@ -460,7 +444,6 @@ def load_turn(root, payload):
     state.setdefault("verified", False)
     state.setdefault("approved", False)
     state.setdefault("close_blocks", 0)
-    state.setdefault("agents_running", 0)
     return cpath, state
 
 
@@ -697,21 +680,15 @@ def handle_subagent_stop(root, cfg, payload):
     EN: A verifier finishing is what satisfies the close gate. Note this must
         NOT clear the turn counter — a subagent ending is not a turn boundary,
         and clearing here would hand the main thread a fresh write budget.
-        Every SubagentStop decrements `agents_running` (floored at 0), whether
-        or not the finishing subagent was a verifier — the close gate's
-        deferral tracks *any* live subagent, not just verifiers.
     KO: 검증자가 끝나는 것이 close 게이트의 충족 조건이다. 여기서 턴 카운터를 비우면
         안 된다 — 서브에이전트 종료는 턴 경계가 아니고, 비우면 메인 스레드가
-        쓰기 예산을 새로 받는다. 끝나는 서브에이전트가 검증자인지와 무관하게
-        모든 SubagentStop 에서 `agents_running` 을 (0 아래로 안 내려가게) 줄인다 —
-        close 게이트의 유예는 검증자만이 아니라 살아 있는 서브에이전트 전부를 센다.
+        쓰기 예산을 새로 받는다.
     """
     agent_type = payload.get("agent_type")
-    cpath, state = load_turn(root, payload)
-    state["agents_running"] = max(0, state.get("agents_running", 0) - 1)
     if agent_type in cfg.get("verifiers", []):
+        cpath, state = load_turn(root, payload)
         state["verified"] = True
-    write_counter(cpath, state)
+        write_counter(cpath, state)
     cost, cost_resolved, agent_id_raw = compute_cost(payload)
     emit_metric(root, cfg, {
         "event": "SubagentStop",
@@ -735,21 +712,10 @@ def handle_stop(root, cfg, payload):
         a stuck verification can never wedge the session.
         Clearing the counter is also what gives per-turn semantics on Claude
         Code builds older than 2.1.196, which have no `prompt_id`.
-        A live background subagent (`agents_running > 0`) defers a would-be
-        block instead of firing it — the gate cannot demand a verdict on work
-        that has not finished yet. The deferral is not an exemption: neither
-        `close_blocks` nor the counter file is touched on this path, so once
-        the last subagent's SubagentStop drops `agents_running` back to 0, an
-        unverified turn is blocked exactly as before.
     KO: 턴 경계이자 close 게이트다. 이번 턴에 산출물이 바뀌었는데 검증자가 안 돌았으면
         한 번 차단해 판정을 턴 종료 전으로 당긴다. 유한하다 — `max_close_blocks` 회
         이후엔 무조건 통과시켜, 검증이 막혀도 세션이 영영 멈추지 않는다.
         카운터를 비우는 것이 `prompt_id` 없는 구버전에서 턴 단위 동작을 만든다.
-        백그라운드 서브에이전트가 살아 있으면(`agents_running > 0`) 차단될 뻔한
-        것을 발동 대신 유예한다 — 아직 끝나지 않은 작업에 판정을 요구할 수 없다.
-        유예는 면제가 아니다 — 이 경로에서는 `close_blocks` 도 카운터 파일도 건드리지
-        않으므로, 마지막 서브에이전트의 SubagentStop 이 `agents_running` 을 0 으로
-        되돌리면 미검증 턴은 이전과 똑같이 차단된다.
     """
     cpath, state = load_turn(root, payload)
     base = {
@@ -774,21 +740,14 @@ def handle_stop(root, cfg, payload):
     owes_verification = state["delegated"] or len(state["wrote"]) > limit
     base["delegated"] = state["delegated"]
 
-    agents_running = state.get("agents_running", 0)
-    would_block = (
+    blocking = (
         cfg.get("close_gate")
         and cfg.get("enforce")
         and owes_verification
         and not state["verified"]
         and state["close_blocks"] < int(cfg.get("max_close_blocks", 2))
     )
-
-    if would_block and agents_running > 0:
-        emit_metric(root, cfg, dict(base, decision="allow", reason="agents-running",
-                                    agents_running=agents_running))
-        allow()
-
-    if would_block:
+    if blocking:
         state["close_blocks"] += 1
         write_counter(cpath, state)
         emit_metric(root, cfg, dict(base, decision="block", reason="unverified",
@@ -837,26 +796,10 @@ def sweep_stale_turns(root, keep_hours=24):
 
 
 def handle_session_start(root, cfg, payload):
-    """
-    EN: Inject repo facts if the project wrote any. Silent no-op otherwise.
-        A `SubagentStart` additionally marks a live subagent for the close
-        gate: `agents_running` is incremented here and decremented on the
-        matching `SubagentStop`, so a Stop that lands while a background
-        subagent is still running can defer instead of blocking blind.
-    KO: 프로젝트가 사실 파일을 남겼으면 주입한다. 아니면 조용히 아무 일도 안 한다.
-        `SubagentStart` 는 추가로 close 게이트를 위해 살아 있는 서브에이전트를
-        표시한다 — 여기서 `agents_running` 을 늘리고 짝이 되는 `SubagentStop` 에서
-        줄인다. 그래야 백그라운드 서브에이전트가 아직 도는 중에 Stop 이 오면
-        모르고 차단하는 대신 유예할 수 있다.
-    """
+    """EN/KO: Inject repo facts if the project wrote any. Silent no-op otherwise."""
     sweep_stale_turns(root)
-    event = payload.get("hook_event_name", "SessionStart")
-    if event == "SubagentStart":
-        cpath, state = load_turn(root, payload)
-        state["agents_running"] = state.get("agents_running", 0) + 1
-        write_counter(cpath, state)
     emit_metric(root, cfg, {
-        "event": event,
+        "event": payload.get("hook_event_name", "SessionStart"),
         "session": payload.get("session_id"),
         "actor": "sub" if payload.get("agent_id") else "main",
         "decision": "allow",
