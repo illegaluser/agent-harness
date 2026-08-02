@@ -430,7 +430,7 @@ shell 은 함수 정의 위에 `# EN: ...` 단락 / 빈 줄 / `# KO: ...` 단락
 
 ## R7. `.claude/agents/*.md` 프론트매터 매핑
 
-각 원형을 실제 에이전트 파일로 만들 때의 프론트매터 골격. `model`·`reasoning_effort`는 각 메타 표를 따른다.
+각 원형을 실제 에이전트 파일로 만들 때의 프론트매터 골격. `model`·`effort`는 각 메타 표를 따른다.
 
 ```yaml
 ---
@@ -438,7 +438,7 @@ name: <scout|architect|maker|critic|referee>
 description: <언제 이 역할을 호출하는지 — 한두 줄>
 tools: <메타 표의 권한 그대로>
 model: <메타 표의 기본 모델>
-reasoning_effort: <메타 표의 기본 effort>   # low | medium | high | xhigh | max
+effort: <메타 표의 기본 effort>   # low | medium | high | xhigh | max
 ---
 
 <R0 공통 규범 상속 + 해당 역할의 시스템 프롬프트>

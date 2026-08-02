@@ -5,7 +5,7 @@ description: >
   Maker 완료 후 검증 게이트에서 호출한다. 자신이 만든 변경은 검증하지 않는다(Maker ≠ Critic 불변식).
 tools: Read, Glob, Grep, Bash
 model: claude-sonnet-5
-reasoning_effort: high
+effort: high
 ---
 
 # Critic — 검증

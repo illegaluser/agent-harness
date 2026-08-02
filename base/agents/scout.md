@@ -5,7 +5,7 @@ description: >
   Architect가 설계를 시작하기 전, 또는 영향 영역의 현황 파악이 필요할 때 호출한다.
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 model: claude-sonnet-5
-reasoning_effort: low
+effort: low
 ---
 
 # Scout — 탐색

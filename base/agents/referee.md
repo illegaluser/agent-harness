@@ -5,7 +5,7 @@ description: >
   팬아웃-검증(Critic ×N) 또는 분할-정복(Maker ×M) 패턴에서만 사용한다.
 tools: Read, Glob, Grep
 model: claude-sonnet-5
-reasoning_effort: medium
+effort: medium
 ---
 
 # Referee — 종합

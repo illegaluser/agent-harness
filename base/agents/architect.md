@@ -5,7 +5,7 @@ description: >
   3개 파일 이상 변경이 필요하거나 아키텍처·설계 결정이 수반되는 작업에서 Maker 호출 전에 사용한다.
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 model: claude-opus-4-8
-reasoning_effort: high
+effort: high
 ---
 
 # Architect — 계획

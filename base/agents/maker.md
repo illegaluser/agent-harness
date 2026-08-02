@@ -5,7 +5,7 @@ description: >
   Architect의 계획이 사용자 승인을 받은 후에 호출한다. 계획 없이 시작 금지.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: claude-sonnet-5
-reasoning_effort: medium
+effort: medium
 ---
 
 # Maker — 구현
