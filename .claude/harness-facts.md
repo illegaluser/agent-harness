@@ -115,8 +115,12 @@ python3 harness/tests/test_gate.py     # 152 tests
 
 ## 저장소 상태 (2026-08-03 세션 종료 시점)
 
-브랜치 `harness-v2`, 커밋 17개, **미푸시. `main` 병합 미결정. PR 없음.**
-워킹트리 clean. 테스트 152 passed / 0 failed. HEAD `57913c6`.
+**`main` 에 병합·푸시 완료.** `harness-v2` 22개 커밋을 fast-forward 로 올렸고
+`origin/main` 이 `de63431` 이다. 워킹트리 clean, 브랜치 `harness-v2` 는 `main` 과 같다.
+병합 상태에서 실측: `test_gate.py` **152 passed / 0 failed**,
+`test_install_global.sh` **12 PASS / 0 failure**.
+
+`harness-v2` 는 원격에 없다 — 내용이 `main` 과 같아 푸시하지 않았다. PR 없음.
 
 ## 배경
 
