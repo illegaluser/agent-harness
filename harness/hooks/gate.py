@@ -67,26 +67,62 @@ SPAWN_TOOLS = ("Agent", "Task")
 
 # EN: Writers whose target is an argument, not a redirect. A segment matching one
 #     of these makes every path-shaped token *in that segment* a candidate target.
+#     `\b`, not `(?:^|\s)` — the latter missed absolute invocations (`/usr/bin/sed`,
+#     `/bin/rm`) because the character right before the word is `/`, not whitespace
+#     or start-of-segment. `\b` matches both `/usr/bin/sed` (boundary at `/`) and
+#     still excludes `used`/`confirm` (no boundary between two word characters).
 # KO: 대상이 리다이렉트가 아니라 인자인 쓰기 명령. 세그먼트가 이 중 하나에 매치되면
 #     그 세그먼트 안의 경로 모양 토큰 전부가 후보 대상이 된다.
+#     `(?:^|\s)` 가 아니라 `\b` 를 쓴다 — 전자는 단어 앞이 `/`인 절대경로 호출
+#     (`/usr/bin/sed`, `/bin/rm`)을 놓쳤다. `\b` 는 `/usr/bin/sed` 도 매치하면서
+#     (`/` 에서 경계 성립) `used`/`confirm` 은 여전히 제외한다(단어 문자끼리는 경계가 없다).
 ARG_WRITE_MARKERS = (
-    r"(?:^|\s)sed\s+[^\n]*-\w*i",
-    r"(?:^|\s)perl\s+[^\n]*-\w*i",
-    r"(?:^|\s)tee\b",
+    r"\bsed\s+[^\n]*-\w*i",
+    r"\bperl\s+[^\n]*-\w*i",
+    r"\btee\b",
+    r"\brm\b",
+    r"\brmdir\b",
+)
+
+# EN: Writers whose target is the LAST path-shaped argument in the segment —
+#     cp/mv/install take source(s) then destination; only the destination is
+#     a target, so the source is not falsely flagged as being overwritten.
+# KO: 대상이 세그먼트의 '마지막' 경로 모양 인자인 쓰기 명령. cp/mv/install 은
+#     원본(들) 다음에 목적지가 오므로 목적지만 대상이다 — 원본을 덮어쓴다고
+#     오판하지 않는다.
+LAST_TOKEN_WRITE_MARKERS = (
+    r"\bcp\b",
+    r"\bmv\b",
+    r"\binstall\b",
 )
 
 # EN: `>`/`>>` with an optional fd number or `&`, optional `|` (noclobber override)
 #     and optional opening quote, capturing only the target word. `2>&1` cannot
-#     match — `&` is not in the target class, so it names no file.
+#     match — `&` is not in the target class, so it names no file. The lookbehind
+#     excludes only `>` and `&` (not `<`): `<` blocked no real false positive
+#     (heredocs/`<`/`<<<` never reach here because REDIRECT_RE itself requires a
+#     literal `>`) but did block `exec 3<> file` (read-write open), a real miss.
 # KO: 앞에 fd 번호나 `&`, 뒤에 `|`(noclobber)·따옴표가 붙을 수 있는 `>`/`>>` 와 그 대상.
 #     `2>&1` 은 매치되지 않는다 — `&` 가 대상 문자 집합에 없어 파일을 지목하지 않는다.
-REDIRECT_RE = re.compile(r"(?<![<>&])(?:[0-9]+|&)?>>?\|?\s*[\"']?([A-Za-z0-9_./~-]+)")
+#     lookbehind 는 `>`·`&` 만 제외한다(`<` 는 제외 안 함) — `<` 를 제외해도 실제
+#     오탐은 안 막았다(heredoc·`<`·`<<<` 는 REDIRECT_RE 자체가 리터럴 `>` 를 요구해
+#     애초에 안 걸린다) 반면 `exec 3<> file`(읽기-쓰기 오픈)은 실제 미탐이었다.
+REDIRECT_RE = re.compile(r"(?<![>&])(?:[0-9]+|&)?>>?\|?\s*[\"']?([A-Za-z0-9_./~-]+)")
 
 # EN: Command separators. A `|` right after `>` is the noclobber form, not a pipe.
 # KO: 명령 구분자. `>` 바로 뒤의 `|` 는 파이프가 아니라 noclobber 표기다.
 SEGMENT_RE = re.compile(r"\|\||&&|(?<!>)[|;&\n]")
 
 PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./~-]+")
+
+# EN: A `cd` segment with a literal argument (not `-`, not empty). We deliberately
+#     do not try to resolve `cd $VAR` correctly — its target segment still gets
+#     tracked as a literal (bogus) directory, which never matches a real product
+#     glob, i.e. it degrades to a miss rather than a false block.
+# KO: 리터럴 인자를 가진 `cd` 세그먼트(`-`도 빈 인자도 아님). `cd $VAR` 를 올바르게
+#     풀려고 하지 않는다 — 대상 세그먼트가 리터럴(가짜) 디렉터리로 추적되는데, 이는
+#     실제 product 글롭에 매치되지 않으므로 오차단이 아니라 미탐으로 완화된다.
+CD_RE = re.compile(r"^\s*cd(?:\s+(\S+))?\s*$")
 
 
 def repo_root():
@@ -138,11 +174,26 @@ def matches_any(rel, patterns):
     EN: fnmatch's `*` crosses `/`, which is what we want: "base/**" and "base/*"
         both mean "anything under base/". We normalize `**` to `*` so config
         files can be written either way.
+        The second test makes a *directory itself* match the glob that covers its
+        contents: rel_path()/realpath() strip trailing slashes, so `rm -rf base/`
+        arrives here as "base", which "base/*" does not match — the token that
+        destroys every product file under it would otherwise be the one token the
+        gate ignores. Appending a sentinel child ("base" -> "base/\x00") asks the
+        real question: "does this glob cover anything inside this path?" \x00 is
+        used because no filesystem allows it in a name, so it can never collide
+        with a real child.
     KO: fnmatch 의 `*` 는 `/` 를 넘는다 — "base/**" 든 "base/*" 든 "base/ 아래 전부"가 된다.
         설정 파일을 어느 쪽으로 쓰든 되도록 `**` 를 `*` 로 정규화한다.
+        두 번째 검사는 **디렉터리 자체**가 그 내용물을 덮는 글롭에 매치되게 한다.
+        rel_path()/realpath() 가 끝 슬래시를 지우므로 `rm -rf base/` 는 여기에 "base"
+        로 도착하는데 "base/*" 는 그것과 매치되지 않는다 — 아래 산출물을 전부 파괴하는
+        바로 그 토큰만 게이트가 무시하게 된다. 센티넬 자식을 붙여("base" -> "base/\x00")
+        "이 글롭이 이 경로 안의 무언가를 덮는가"를 묻는다. \x00 을 쓰는 이유는 어떤
+        파일시스템도 이름에 허용하지 않아 실제 자식과 충돌할 수 없기 때문이다.
     """
     for pat in patterns:
-        if fnmatch.fnmatch(rel, pat.replace("**", "*")):
+        norm = pat.replace("**", "*")
+        if fnmatch.fnmatch(rel, norm) or fnmatch.fnmatch(rel + "/\x00", norm):
             return True
     return False
 
@@ -216,34 +267,115 @@ def deny(message):
     sys.exit(2)
 
 
-def resolve_target(root, token):
-    """EN/KO: token -> absolute path. `~` expands; a relative token resolves under root."""
+def resolve_target(cwd, token):
+    """EN/KO: token -> absolute path. `~` expands; a relative token resolves under cwd."""
     t = os.path.expanduser(token) if token.startswith("~") else token
-    return t if os.path.isabs(t) else os.path.join(root, t)
+    return t if os.path.isabs(t) else os.path.join(cwd, t)
 
 
 def bash_targets(command, root, cfg):
     """
-    EN: Only *targets* count. A redirect names its target; sed -i / perl -i / tee
-        name theirs as arguments, so for those we test every path-shaped token in
-        the same segment. Path tokens elsewhere — grep sources, `2>/dev/null` —
-        are not targets and no longer trip the gate. Still not a sandbox: writes
-        from inside python/git/cp are invisible to a static scan, by design.
-    KO: '대상'만 센다. 리다이렉트는 대상을 지목하고, sed -i·perl -i·tee 는 인자가
-        대상이라 같은 세그먼트의 경로 모양 토큰을 전부 검사한다. 그 밖의 경로 토큰
-        (grep 인자, `2>/dev/null`)은 대상이 아니므로 더는 걸리지 않는다. 샌드박스는
-        아니다 — python/git/cp 내부의 쓰기는 정적 검사로 보이지 않으며 그것이 설계다.
+    EN: Only *targets* count. A redirect names its target; sed -i / perl -i / tee /
+        rm / rmdir name theirs as arguments, so for those we test every path-shaped
+        token in the same segment (no "looks like a path" pre-filter — a bare word
+        can itself be a product directory, e.g. `rm -rf base`; is_product is the
+        only thing that decides what is product, non-path words simply miss the
+        globs). cp/mv/install take source(s) then destination, so only the last
+        path-shaped token in the segment is a target. We track `cd` across
+        segments (accumulating, e.g. `cd a && cd b` -> a/b) so relative targets in
+        a later segment resolve against the directory the shell would actually be
+        in, not always the repo root; `cd -` or a bare `cd` gives up tracking and
+        resets to root rather than guessing. Still not a sandbox: writes from
+        inside python/git are invisible to a static scan, by design.
+
+        Known misses, accepted on purpose:
+        (1) `gsed -i ... base/f.md` — `g` is a word character, so `\\bsed` does not
+            match; `ls base/*.md | xargs sed -i ...` and
+            `find base -name '*.md' -exec sed -i ... {} +` — the target arrives via
+            stdin/substitution, not as a literal word next to the command.
+        (2) `(cd base && echo x > f.md)` subshell, `pushd base; ...`, and
+            `cd $VAR && ...` — a subshell boundary breaks our segment-based `cd`
+            tracking (the `(` prevents CD_RE from matching); `pushd` is not
+            tracked; a variable resolves to a literal (bogus) directory that never
+            matches a real product glob, so it degrades to a miss, not a block.
+        (3) `mv base /tmp/base` — cp/mv/install only name their destination, so
+            moving a product tree *out* is invisible; `rm -rf .` — the repo root
+            matches no product glob and never should, or every command would be a
+            product write; a product glob that demands a file suffix
+            ("docs/*.md") does not cover the directory, so `rm -rf docs/` passes
+            under that config; `echo${IFS}x${IFS}>${IFS}base/f.md` (IFS in place of
+            spaces) — the target after `>` is no longer an unbroken path-shaped
+            token; `echo base/f.md | xargs -I{} tee {} </dev/null` — the real
+            target reaches `tee` through `{}` substitution, not as a literal word
+            in its segment. (A redirect's target word wrapped to the next
+            physical line — `echo x >` then a new line `base/f.md`, valid bash —
+            is NOT a miss: SEGMENT_RE's own `(?<!>)` keeps a newline right after
+            `>` from splitting the segment, so REDIRECT_RE's `\\s*` still reaches
+            across it.)
+
+        Over-blocks, accepted: any `<word> rm <name>` (docker/npm/podman) whose
+        name equals a top-level product directory, and `git rm --cached
+        base/f.md`, which does not delete the file. Static text cannot tell
+        `docker rm base` from `rm base`, and the cost of an over-block (use
+        Edit, or delegate to a subagent) is not symmetric with the cost of a
+        miss (an irreversible tree deletion).
+    KO: '대상'만 센다. 리다이렉트는 대상을 지목하고, sed -i·perl -i·tee·rm·rmdir 는
+        인자가 대상이라 같은 세그먼트의 경로 모양 토큰을 전부 검사한다("경로처럼
+        생겼나" 사전 필터 없음 — 맨 단어가 그 자체로 산출물 디렉터리일 수 있다.
+        예: `rm -rf base`; 무엇이 산출물인지는 is_product 만 정하고, 경로가 아닌
+        단어는 글롭에 안 걸릴 뿐이다). cp/mv/install 은 원본(들) 다음에 목적지가
+        오므로 세그먼트의 마지막 경로 모양 토큰만 대상이다. `cd` 를 세그먼트 사이로
+        추적해(누적 적용, 예: `cd a && cd b` -> a/b) 이후 세그먼트의 상대 대상이
+        저장소 루트가 아니라 셸이 실제로 있을 디렉터리를 기준으로 풀리게 한다.
+        `cd -` 나 인자 없는 `cd` 는 추적을 포기하고 루트로 되돌린다(추측하지 않는다).
+        여전히 샌드박스는 아니다 — python/git 내부의 쓰기는 정적 검사로 보이지 않으며
+        그것이 설계다.
+
+        의도적으로 수용하는 미탐:
+        (1) `gsed -i ... base/f.md` — `g` 가 단어 문자라 `\\bsed` 가 매치되지 않는다.
+            `ls base/*.md | xargs sed -i ...` · `find base -name '*.md' -exec sed -i
+            ... {} +` — 대상이 명령어 옆 리터럴 단어가 아니라 stdin/치환으로 들어온다.
+        (2) `(cd base && echo x > f.md)` 서브셸 · `pushd base; ...` · `cd $VAR && ...`
+            — 서브셸 경계가 세그먼트 기반 `cd` 추적을 끊고(`(` 때문에 CD_RE 가
+            매치 안 됨), `pushd` 는 추적 대상이 아니며, 변수는 리터럴(가짜) 디렉터리로
+            풀려 실제 product 글롭에 매치되지 않으므로 오차단이 아니라 미탐으로
+            완화된다.
+        (3) `mv base /tmp/base` — cp/mv/install 은 목적지만 지목하므로 산출물 트리를
+            밖으로 옮기는 것은 보이지 않는다. `rm -rf .` — 저장소 루트는 어떤 product
+            글롭에도 걸리지 않으며 걸려서도 안 된다(걸리면 모든 명령이 산출물 쓰기가
+            된다). 파일 접미사를 요구하는 글롭("docs/*.md")은 디렉터리를 덮지 않으므로
+            그 설정에서는 `rm -rf docs/` 가 통과한다. `echo${IFS}x${IFS}>${IFS}base/f.md`
+            (공백 대신 IFS) — `>` 뒤 대상이 더 이상 끊기지 않은 경로 모양 토큰이 아니다.
+            `echo base/f.md | xargs -I{} tee {} </dev/null` — 실제 대상이 `{}` 치환을
+            통해 `tee` 에 닿을 뿐 그 세그먼트의 리터럴 단어가 아니다. (리다이렉트 대상
+            단어가 다음 물리 줄로 넘어간 경우 — `echo x >` 다음 줄에 `base/f.md`, 유효한
+            bash — 는 미탐이 **아니다**: SEGMENT_RE 자신의 `(?<!>)` 가 `>` 바로 뒤
+            개행에서는 자르지 않으므로 REDIRECT_RE 의 `\\s*` 가 그 너머까지 닿는다.)
+
+        수용하는 과차단: 이름이 최상위 산출물 디렉터리와 같은 `<word> rm <name>`
+        (docker/npm/podman)과, 파일을 지우지 않는 `git rm --cached base/f.md`.
+        정적 텍스트로는 `docker rm base` 와 `rm base` 를 구분할 수 없고, 과차단의
+        대가(Edit 사용, 또는 서브에이전트 위임)는 미탐의 대가(되돌릴 수 없는 트리
+        삭제)와 대칭이 아니다.
     """
     candidates = []
+    cwd = root
     for seg in SEGMENT_RE.split(command):
-        if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
-            candidates.extend(PATH_TOKEN_RE.findall(seg))
-        candidates.extend(REDIRECT_RE.findall(seg))
-    hits = []
-    for token in candidates:
-        if "." not in token and "/" not in token:
+        cd_match = CD_RE.match(seg)
+        if cd_match:
+            arg = cd_match.group(1)
+            cwd = root if arg in (None, "-") else resolve_target(cwd, arg)
             continue
-        path = resolve_target(root, token)
+        if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
+            candidates.extend((cwd, t) for t in PATH_TOKEN_RE.findall(seg))
+        if any(re.search(m, seg) for m in LAST_TOKEN_WRITE_MARKERS):
+            path_tokens = [t for t in PATH_TOKEN_RE.findall(seg) if "." in t or "/" in t]
+            if path_tokens:
+                candidates.append((cwd, path_tokens[-1]))
+        candidates.extend((cwd, t) for t in REDIRECT_RE.findall(seg))
+    hits = []
+    for cwd_at, token in candidates:
+        path = resolve_target(cwd_at, token)
         if is_product(root, cfg, path):
             rel = rel_path(root, path)
             if rel not in hits:      # dedup here, so bash_gate's join stays 1:1 with files

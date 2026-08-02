@@ -268,6 +268,18 @@ def test_bash_write_targets_blocked():
         check("duplicate targets named once (exit)", code == 2, "exit=%d" % code)
         check("duplicate targets named once (dedup)", err.count("base/f.md") == 1,
               repr(err))
+
+        p["tool_input"] = {"command": "rm base/f.md"}
+        check("rm on a product file DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "rm -rf base/"}
+        check("rm -rf on a product dir DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cp /tmp/x base/f.md"}
+        check("cp into a product file DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "mv /tmp/x base/f.md"}
+        check("mv into a product file DENIED", run(root, p)[0] == 2)
     finally:
         shutil.rmtree(root)
 
@@ -322,9 +334,226 @@ def test_bash_read_only_allowed():
         p["tool_input"] = {"command": "echo x > base/EXEMPT.md"}
         check("exempt file may be written", run(root, p)[0] == 0)
 
+        p["tool_input"] = {"command": "cp base/f.md /tmp/x"}
+        check("cp of a product file to /tmp allowed", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "mv base/f.md /tmp/x"}
+        check("mv of a product file to /tmp allowed", run(root, p)[0] == 0)
+
         p["agent_id"] = "agent-abc"
         p["tool_input"] = {"command": "echo x > base/f.md"}
         check("subagent redirect into a product file allowed", run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_bash_anchor_and_lookbehind_regression():
+    """
+    EN: Critic's E2E found that `(?:^|\\s)` markers missed absolute invocations
+        (`/usr/bin/sed`, `/bin/tee`) because the character before the word is `/`,
+        not whitespace or start-of-segment. `\\b` fixes it without reopening the
+        `used`/`committee` false positives the old marker was written to avoid.
+        Also covers the `exec 3<> file` miss from dropping `<` off the redirect
+        lookbehind, and confirms that drop creates no new false positive for
+        heredoc/`<`/`<<<` (REDIRECT_RE itself requires a literal `>`, so those
+        never reach the lookbehind at all).
+    KO: Critic 의 E2E 가 `(?:^|\\s)` 마커의 미탐을 찾아냈다 — 단어 앞 문자가 공백/세그먼트
+        시작이 아니라 `/` 인 절대경로 호출(`/usr/bin/sed`, `/bin/tee`)을 놓쳤다. `\\b`
+        는 옛 마커가 피하려던 `used`/`committee` 오탐을 다시 열지 않으면서 이를 고친다.
+        리다이렉트 lookbehind 에서 `<` 를 뺀 것이 만든 `exec 3<> file` 미탐도 다루고,
+        그 제거가 heredoc/`<`/`<<<` 에 새 오탐을 만들지 않음을 확인한다(REDIRECT_RE
+        자체가 리터럴 `>` 를 요구하므로 애초에 lookbehind 에 닿지 않는다).
+    """
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {"command": "/usr/bin/sed -i '' 's/a/b/' base/f.md"}
+        check("absolute sed -i DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "echo x | /usr/bin/tee base/f.md"}
+        check("absolute tee DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "/bin/rm -rf base/"}
+        check("absolute rm DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "grep -rn used base/"}
+        check("'used' is not treated as sed (control)", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "grep -rn committee base/"}
+        check("'committee' is not treated as tee (control)", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "echo x | sudo tee base/f.md"}
+        check("sudo tee DENIED (control, was already caught)", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "exec 3<> base/f.md"}
+        check("exec read-write open DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "ls base/ 2>&1 | head"}
+        check("2>&1 still not a target (no new false positive)", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "cmd < base/f.md"}
+        check("plain input redirect is not a target (no new false positive)",
+              run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "cmd <<< 'x' > /tmp/o"}
+        check("here-string redirect to /tmp is not a target (no new false positive)",
+              run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "cat <<'EOF' > /tmp/o\nhi\nEOF"}
+        check("heredoc to /tmp is not a target (no new false positive)",
+              run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_bash_cd_tracking():
+    """
+    EN: Critic's E2E found `cd X && write` resolved the write's relative target
+        against the repo root instead of X, so `cd harness/hooks && echo x > gate.py`
+        overwrote the gate itself. bash_targets now tracks `cd` across segments,
+        accumulating (`cd a && cd b` -> a/b) and resetting to root on `cd -` or a
+        bare `cd` rather than guessing.
+    KO: Critic 의 E2E 가 `cd X && write` 의 상대 대상이 X 가 아니라 저장소 루트 기준으로
+        풀리는 것을 찾아냈다 — `cd harness/hooks && echo x > gate.py` 가 게이트 자신을
+        변조했다. bash_targets 는 이제 세그먼트 사이로 `cd` 를 추적하고(누적,
+        `cd a && cd b` -> a/b), `cd -` 나 인자 없는 `cd` 에서는 추측하지 않고 루트로
+        되돌린다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {"command": "cd base && echo x > f.md"}
+        check("cd into a product dir then relative write DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cd base/sub && echo x > ../f.md"}
+        check("cd into a product subdir then ../ write DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cd base; echo x > f.md"}
+        check("cd with ; separator is tracked too", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "cd /tmp && echo x > out.txt"}
+        check("cd into a non-product dir then write allowed (no new false positive)",
+              run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "cd .. && ls"}
+        check("a harmless cd with no write is unaffected", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "cd - && echo x > f.md"}
+        check("cd - gives up tracking and falls back to root (miss, accepted)",
+              run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_bash_directory_targets():
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {"command": "rm -rf base"}
+        check("rm of a product dir without a trailing slash DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "rm -r base/sub"}
+        check("rm -r of a product subdir DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "rmdir base/sub"}
+        check("rmdir of a product subdir DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "rm -rf notes"}
+        check("rm of a non-product dir allowed", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "rm -rf /tmp/base"}
+        check("rm of a same-named dir outside the repo allowed", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "rm -rf base/EXEMPT.md"}
+        check("rm of an exempt file allowed", run(root, p)[0] == 0)
+
+        p["agent_id"] = "agent-abc"
+        p["tool_input"] = {"command": "rm -rf base/"}
+        check("subagent rm of a product dir allowed", run(root, p)[0] == 0)
+        del p["agent_id"]
+
+        p["tool_input"] = {"command": "cp -r /tmp/x base/sub"}
+        check("cp into a product subdir DENIED", run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "git rm --cached base/f.md"}
+        check("over-block accepted: git rm --cached is treated as a delete",
+              run(root, p)[0] == 2)
+
+        p["tool_input"] = {"command": "docker rm base"}
+        check("over-block accepted: docker rm of a name matching a product dir",
+              run(root, p)[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_bash_known_misses():
+    """EN/KO: 미탐을 명시적으로 고정한다 — 조용히 바뀌면 이 테스트가 먼저 드러낸다."""
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {"command": "mv base /tmp/base"}
+        check("known miss: moving a product dir out of the repo is not caught",
+              run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "rm -rf ."}
+        check("known miss: `rm -rf .` is not caught (repo root matches no glob)",
+              run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "echo${IFS}PWNED${IFS}>${IFS}base/f.md"}
+        check("known miss: $IFS in place of spaces breaks the redirect token",
+              run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "echo base/f.md | xargs -I{} tee {} </dev/null"}
+        check("known miss: xargs {} substitution hides the real target from tee",
+              run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_exempt_subtree_covers_its_directory():
+    root = make_repo(dict(ENFORCING, exempt=["base/sub/**"]))
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+
+        p["tool_input"] = {"command": "rm -rf base/sub/"}
+        check("rm of a fully exempt subtree allowed", run(root, p)[0] == 0)
+
+        p["tool_input"] = {"command": "rm -rf base/"}
+        check("rm of the parent of an exempt subtree DENIED", run(root, p)[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_write_gate_on_directory_path():
+    root = make_repo(dict(ENFORCING, close_gate=False))
+    try:
+        code, _, _ = run(root, write_payload(root, "base"))
+        check("Write on a bare product-dir path is counted, not blocked", code == 0)
+
+        code, _, _ = run(root, write_payload(root, "base/a.md"))
+        check("second write still under budget", code == 0)
+
+        code, _, _ = run(root, write_payload(root, "base/b.md"))
+        check("the directory-path write consumed a budget slot", code == 2)
     finally:
         shutil.rmtree(root)
 
