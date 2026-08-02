@@ -55,21 +55,20 @@ python3 harness/tests/test_gate.py     # 152 tests
 양방향이 다 통과해야 한다 — 메인을 막는 것과 서브에이전트를 **막지 않는** 것.
 한 방향만 보면 "무용한 게이트"와 "마비된 세션"이 둘 다 성공처럼 보인다.
 
-## 다음 세션에서 먼저 할 것 — 사용자 손이 필요한 것 하나
+## Claude Code 버전 — 해결됨 (2026-08-03)
 
-**Claude Code 를 업데이트해야 한다.** 설치본이 `2.1.128`, npm 최신이 `2.1.220` (92 버전 뒤).
-`npm install -g` 가 `EACCES` 로 실패한다 — `/usr/local/lib/node_modules/` 쓰기 권한이 없다.
-에이전트는 `sudo` 를 실행할 수 없으므로 **사용자가 터미널에서 직접** 돌려야 한다:
+**업데이트 완료. `2.1.220` 이고 npm 최신과 같다.** 이 세션은 VS Code 확장의
+`2.1.220` 네이티브 바이너리로 돌고 있다.
 
-```bash
-sudo npm install -g @anthropic-ai/claude-code@latest
-```
+검증한 것:
 
-**업데이트가 하네스 동작을 바꾼다.** `prompt_id` 는 `2.1.196` 부터 훅 페이로드에 실린다
-(2.1.128 에는 없다). 지금은 `turn_key()` 가 항상 `None` 이고 턴 경계가 `Stop` 의 카운터 파일
-삭제 하나뿐이다. 업데이트하면 `prompt_id` 경로가 살아난다 — **업데이트 직후
-`python3 harness/tests/test_gate.py` 를 다시 돌리고, 쓰기 예산이 턴마다 리셋되는지
-실제 세션에서 확인하라.**
+- `python3 harness/tests/test_gate.py` → **152 passed / 0 failed**
+- 라이브 페이로드에 `prompt_id` 가 **실린다.** 산출물 쓰기 직후 카운터 파일의 `turn` 이
+  실제 UUID(`38f76cbb-…`)로 기록됐다. `turn_key()` 가 `None` 을 돌려주던 상태는 끝났고,
+  턴 경계가 `Stop` 의 카운터 삭제와 `prompt_id` **양쪽**으로 선다.
+
+버전을 다시 확인해야 하면 문서를 믿지 말고 실측하라 — `claude --version` 과
+`.claude/state/gate-<session>.json` 의 `turn` 필드.
 
 ## 미완 (이어서 할 일)
 
@@ -84,11 +83,15 @@ sudo npm install -g @anthropic-ai/claude-code@latest
    `SubagentStart` − `SubagentStop` 카운트로 유예하는 안을 구현했다가(`7fb4f1f`)
    **critic FAIL 로 되돌렸다(`8f43661`)** — 무한 유예로 바뀌어 턴 경계가 소멸하고 승인
    게이트가 무력화됐다. 판정 근거는 아래 "critic 이 남긴 것". **다시 손대지 마라.**
-4. **`install.sh --global` 주변 미처리 4건** (critic 2026-08-03, 전부 데이터 손실 없음):
+4. **`install.sh --global` 주변 미처리 4건 — 해결됨 (2026-08-03, D-007).**
    `~/.claude/agents` 가 심링크일 때 `cp -R` 백업이 심링크만 복사(W3) ·
    `~/.claude/CLAUDE.md` 가 심링크면 조용히 실파일로 대체(W4) ·
    `--global` 에 `python3` 사전 확인 없음, 없으면 오안내 + 반쪽 설치(W5) ·
-   내용이 같아도 매번 `.bak-<epoch>` 생성해 무한 누적(N4).
+   내용이 같아도 매번 `.bak-<epoch>` 생성해 무한 누적(N4) — 넷 다 고쳤다.
+   `resolve_if_symlink()` 가 W3·W4 를 심링크 물리 경로 해석으로, `require_python3()` 가
+   W5 를 사전 차단으로, `agents_dir_unchanged()` + 백업을 `mv` 직전으로 이동한 것이 N4 를
+   해결한다. 신규 `harness/tests/test_install_global.sh` 9 케이스로 검증(`mktemp -d` `HOME`
+   오버라이드만 사용, 실제 `$HOME` 은 안 건드림). 근거는 `docs/DECISIONS.md` D-007.
 
 ## critic 이 남긴 것 (2026-08-03, opus)
 

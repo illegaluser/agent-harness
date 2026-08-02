@@ -1,8 +1,8 @@
 # 하네스 코어
 
 이 문서가 하네스의 전부다. 여기 없는 것은 하네스가 아니다.
-소스 파일은 `CORE.md` · `hooks/gate.py` · `tests/test_gate.py` · `tools/subagent_cost.py` ·
-`agents/` 5개 · `global/CLAUDE.harness.md` · `install.sh` 다.
+소스 파일은 `CORE.md` · `hooks/gate.py` · `tests/test_gate.py` · `tests/test_install_global.sh` ·
+`tools/subagent_cost.py` · `agents/` 5개 · `global/CLAUDE.harness.md` · `install.sh` 다.
 
 **설계 원칙 — 집행할 수 없는 규칙은 쓰지 않는다.** 못 쓰겠으면 `조언` 으로 표시하고 코어 밖에 둔다.
 아래 모든 규칙에는 집행 주체가 붙어 있다. 붙일 수 없으면 그 규칙은 여기 있으면 안 된다.
@@ -85,9 +85,12 @@
 `harness/install.sh --global` 로 반영한다.
 
 게이트를 바꾸면 [`tests/test_gate.py`](tests/test_gate.py) 를 돌려라.
+`install.sh` 의 `--global` 경로를 바꾸면 [`tests/test_install_global.sh`](tests/test_install_global.sh) 도
+돌려라 — 실제 `$HOME` 은 건드리지 않고 `mktemp -d` 오버라이드로만 검증한다.
 
 ```bash
 python3 harness/tests/test_gate.py
+bash harness/tests/test_install_global.sh
 ```
 
 게이트는 **양쪽이 다 통과해야** 완성이다 — 메인 스레드를 막는 것과, 서브에이전트를 막지 **않는** 것.

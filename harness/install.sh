@@ -192,6 +192,49 @@ require_valid_target_settings() {
     fi
 }
 
+# EN: Fail fast and loud if python3 is missing — it merges/verifies the marker
+#     block and, after this fix, resolves symlinks too. Global install/uninstall
+#     both depend on it before touching anything.
+# KO: python3 이 없으면 즉시 중단 — 마커 블록 병합·검증에 쓰이고, 이 수정 이후로는
+#     심링크 해석에도 쓰인다. 전역 설치·제거 둘 다 아무것도 건드리기 전에 확인한다.
+require_python3() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        log "ERROR: python3 is required and was not found on PATH."
+        log "       It is used to merge/verify the HARNESS:BEGIN/END block in"
+        log "       ~/.claude/CLAUDE.md. Install python3, or edit that block by hand."
+        exit 1
+    fi
+}
+
+# EN: If $1 is a symlink, follow it to its physical target and print that path
+#     (a dangling symlink — -L and not -e — logs and exits 1, since the user's
+#     own config is already broken and we should not create files under an
+#     unmounted path). If $1 is not a symlink, print it unchanged. This makes a
+#     dotfiles-managed ~/.claude/CLAUDE.md or ~/.claude/agents symlink resolve
+#     to its real backing file/dir, so install writes land there instead of
+#     silently replacing the symlink with a plain file/dir.
+#     ~/.claude itself being a symlink is out of scope — not handled here.
+# KO: $1 이 심링크면 물리 경로로 따라가 출력한다(끊긴 심링크 — -L 이면서 !-e —
+#     면 log 후 exit 1: 사용자 설정이 이미 깨져 있으므로 마운트 안 된 경로에
+#     파일을 만들지 않는다). 심링크가 아니면 그대로 출력한다. dotfiles 로 관리되는
+#     ~/.claude/CLAUDE.md 나 ~/.claude/agents 심링크가 실제 백업 파일/디렉터리로
+#     풀리게 해서, 설치 결과가 심링크를 실파일/실디렉터리로 조용히 대체하지 않게 한다.
+#     ~/.claude 디렉터리 자신이 심링크인 경우는 범위 밖이며 여기서 다루지 않는다.
+resolve_if_symlink() {
+    local p="$1"
+    if [ ! -L "$p" ]; then
+        printf '%s\n' "$p"
+        return 0
+    fi
+    if [ -e "$p" ]; then
+        python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$p"
+        return 0
+    fi
+    log "ERROR: $p is a symlink but its target does not exist (dangling)."
+    log "       Fix or remove the symlink, then re-run the installer."
+    exit 1
+}
+
 # EN: Copy a source file over a target path, snapshotting any pre-existing target
 #     file to <path>.bak-<epoch> first. The installer must never silently destroy
 #     something the project already had there.
@@ -437,32 +480,55 @@ PYEOF
     return "$failed"
 }
 
+# EN: True (exit 0) only if all 5 agent role files under $1 already byte-match
+#     this repo's source — i.e. this install would not change anything there.
+#     Reuses the cmp -s predicate from copy_with_backup rather than diff -r,
+#     which always reports a difference here: the target directory may hold
+#     the user's own extra agent files that the source never has (D3).
+# KO: $1 아래 에이전트 역할 파일 5개가 전부 이 저장소 소스와 바이트 동일할 때만
+#     참(exit 0) — 즉 이번 설치가 거기서 아무것도 바꾸지 않는다는 뜻이다.
+#     copy_with_backup 의 cmp -s 선례를 재사용한다 — diff -r 은 항상 다르다고
+#     답한다: 대상 디렉터리엔 사용자 자신의 다른 에이전트 파일이 있을 수 있고
+#     소스에는 정확히 5개뿐이기 때문이다(D3).
+agents_dir_unchanged() {
+    local dir="$1" name
+    for name in "${AGENT_NAMES[@]}"; do
+        if ! cmp -s "$HARNESS_SRC/agents/$name.md" "$dir/$name.md" 2>/dev/null; then
+            return 1
+        fi
+    done
+    return 0
+}
+
 # EN: Install/update the harness-managed block of the user's global
 #     ~/.claude/CLAUDE.md and the 5 role definitions under ~/.claude/agents/,
 #     as real files (not symlinks — a global setting must survive this repo
-#     moving or changing branch). Order is fixed: backup, then copy agents,
-#     then merge the marker block, then verify.
+#     moving or changing branch). If either path is itself a symlink (e.g. a
+#     dotfiles setup), it is resolved to its physical target first, so writes
+#     land there instead of silently replacing the symlink. A backup is made
+#     only when the install would actually change something, and only right
+#     before the mutation that would change it.
 # KO: 사용자 전역 ~/.claude/CLAUDE.md 의 하네스 관리 블록과 ~/.claude/agents/
 #     아래 역할 정의 5개를 실파일로(심링크 아님 — 전역 설정은 이 저장소가
-#     옮겨지거나 브랜치가 바뀌어도 살아남아야 한다) 설치·갱신한다. 순서 고정:
-#     백업 → 에이전트 복사 → 마커 블록 병합 → 검증.
+#     옮겨지거나 브랜치가 바뀌어도 살아남아야 한다) 설치·갱신한다. 둘 중 하나가
+#     심링크(예: dotfiles 구성)면 먼저 물리 경로로 해석해 그 경로에 쓴다 —
+#     심링크를 조용히 실파일/실디렉터리로 대체하지 않는다. 백업은 이번 설치가
+#     실제로 뭔가를 바꿀 때만, 그 변형 직전에만 만든다.
 do_install_global() {
+    require_python3
     local epoch
     epoch="$(epoch_now)"
     local global_claude="$HOME/.claude/CLAUDE.md"
     local global_agents_dir="$HOME/.claude/agents"
+    global_claude="$(resolve_if_symlink "$global_claude")"
+    global_agents_dir="$(resolve_if_symlink "$global_agents_dir")"
 
     mkdir -p "$HOME/.claude"
 
-    # 1. Backup first — git 밖이라 git revert 로 복구되지 않는다.
-    if [ -f "$global_claude" ]; then
-        cp "$global_claude" "$global_claude.bak-$epoch" || {
-            log "ERROR: backup of $global_claude failed. Aborting — nothing changed."
-            exit 1
-        }
-        log "backed up existing $global_claude -> $global_claude.bak-$epoch"
-    fi
-    if [ -d "$global_agents_dir" ]; then
+    # 1. Backup the agents directory, but only if this install would actually
+    #    change something under it (N4) — per-file backups in step 2 already
+    #    cover byte-identical files individually.
+    if [ -d "$global_agents_dir" ] && ! agents_dir_unchanged "$global_agents_dir"; then
         cp -R "$global_agents_dir" "$global_agents_dir.bak-$epoch" || {
             log "ERROR: backup of $global_agents_dir failed. Aborting — nothing changed."
             exit 1
@@ -477,8 +543,8 @@ do_install_global() {
         copy_with_backup "$HARNESS_SRC/agents/$name.md" "$global_agents_dir/$name.md" "$epoch"
     done
 
-    # 3. Merge the HARNESS marker block. $global_claude itself is untouched
-    #    unless the merge succeeds.
+    # 3. Merge the HARNESS marker block into a tmp file. $global_claude itself
+    #    is untouched until the mv below.
     local merged="$global_claude.tmp-$$"
     TMP_FILES+=("$merged")
     if ! merge_marker_block "$global_claude" "$HARNESS_SRC/global/CLAUDE.harness.md" "$merged"; then
@@ -486,6 +552,15 @@ do_install_global() {
         log "수동 절차: $global_claude 에서 $MARKER_BEGIN / $MARKER_END 마커를 직접 확인해 고치세요."
         log "           (한쪽만 있거나 순서가 뒤집혀 있으면 자동 병합을 하지 않습니다.)"
         exit 1
+    fi
+    # Backup right before the only mutation of $global_claude, and only if it
+    # would actually change (N4).
+    if [ -f "$global_claude" ] && ! cmp -s "$merged" "$global_claude"; then
+        cp "$global_claude" "$global_claude.bak-$epoch" || {
+            log "ERROR: backup of $global_claude failed. Aborting — nothing changed."
+            exit 1
+        }
+        log "backed up existing $global_claude -> $global_claude.bak-$epoch"
     fi
     mv "$merged" "$global_claude"
 
@@ -497,13 +572,20 @@ do_install_global() {
 #     leaving everything outside it byte-for-byte intact, and delete only the
 #     role files under ~/.claude/agents that still byte-match this repo's
 #     source — a file the user hand-edited stays. Backups are never deleted.
+#     If either path is itself a symlink (e.g. a dotfiles setup), it is
+#     resolved to its physical target first, so the edit lands there instead
+#     of silently replacing the symlink with a plain file.
 # KO: ~/.claude/CLAUDE.md 에서 HARNESS 마커 블록을 마커 줄 포함 제거하고 그
 #     밖은 그대로 두며, ~/.claude/agents 아래 역할 파일 중 이 저장소 소스와
 #     여전히 바이트 동일한 것만 지운다 — 사용자가 손으로 고친 파일은 남는다.
-#     백업은 지우지 않는다.
+#     백업은 지우지 않는다. 둘 중 하나가 심링크(예: dotfiles 구성)면 먼저 물리
+#     경로로 해석해 그 경로를 고친다 — 심링크를 조용히 실파일로 대체하지 않는다.
 do_uninstall_global() {
+    require_python3
     local global_claude="$HOME/.claude/CLAUDE.md"
     local global_agents_dir="$HOME/.claude/agents"
+    global_claude="$(resolve_if_symlink "$global_claude")"
+    global_agents_dir="$(resolve_if_symlink "$global_agents_dir")"
 
     if [ -f "$global_claude" ]; then
         local begin_count end_count

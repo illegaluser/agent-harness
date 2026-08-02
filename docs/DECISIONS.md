@@ -348,3 +348,87 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   여지를 남긴다.
 - 결정자 (Decider): 사용자 (User)
 - 연결 (Links): `harness/tools/subagent_cost.py` · `harness/CORE.md` · `.claude/harness-facts.md`
+
+## D-007 · Follow symlinks in `install.sh --global`, gate on `python3` first, and skip no-op backups / `install.sh --global` 이 심링크를 따라가고 `python3` 를 제일 먼저 확인하며 무변화 백업을 만들지 않게 한다 — 2026-08-03
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: A prior critic pass on `install.sh --global` left four unresolved findings (W3, W4, W5, N4;
+  see "미완 4번" in `.claude/harness-facts.md`). If `~/.claude/agents` or `~/.claude/CLAUDE.md` is a
+  symlink (a dotfiles setup), `cp -R`/`mv` silently replaced the symlink with a real file/dir (W4)
+  or backed up only the symlink itself, not its target's content (W3). With no upfront `python3`
+  check, a machine missing it hit a bare `command not found` mid-install, after files were already
+  copied (W5). And every re-run created a fresh `.bak-<epoch>` even when nothing had changed (N4).
+  KO: 이전 critic 검증이 `install.sh --global` 에 미해결 4건을 남겼다(W3, W4, W5, N4;
+  `.claude/harness-facts.md` 의 "미완 4번"). `~/.claude/agents` 나 `~/.claude/CLAUDE.md` 가
+  심링크(dotfiles 구성)면 `cp -R`/`mv` 가 심링크를 조용히 실파일/실디렉터리로 대체하거나(W4)
+  심링크 자신만 백업하고 그 대상 내용은 못 담았다(W3). `python3` 사전 확인이 없어 없는 머신은
+  파일이 이미 복사된 뒤에 맨 `command not found` 로 죽었다(W5). 그리고 아무것도 안 바뀌었어도
+  재실행마다 새 `.bak-<epoch>` 를 만들었다(N4).
+- 결정 (Decision):
+  EN: (1) Follow symlinks (D1). `resolve_if_symlink()` leaves a non-symlink path unchanged, resolves
+  a live symlink to its physical target via `python3 -c 'import os,sys;print(os.path.realpath(...))'`,
+  and exits 1 on a dangling one before touching anything. Applied to both `global_claude` and
+  `global_agents_dir` right after assignment, before any `mkdir -p`/backup, in both
+  `do_install_global` and `do_uninstall_global`. `~/.claude` itself being a symlink is out of scope.
+  (2) `require_python3()` (D2), shaped exactly like `require_jq` (same file, `command -v` check +
+  two `log` lines + `exit 1`), called as the literal first statement of `do_install_global` and
+  `do_uninstall_global` — before any `mkdir -p` or backup. (3) Skip no-op backups (part of the same
+  change, extending N4's existing per-file `cmp -s` pattern from `copy_with_backup`): the
+  directory-level `agents` backup is now gated by a new `agents_dir_unchanged()` predicate (5×
+  `cmp -s` against source, not `diff -r` — `diff -r` always reports a difference here because the
+  target directory can hold the user's own extra agent files that the source never has), and the
+  `CLAUDE.md` backup is moved to immediately before the `mv` that mutates it, gated by
+  `! cmp -s "$merged" "$global_claude"`. (4) The 3 backups already on this machine
+  (`CLAUDE.md.bak-1785688294`, `agents.bak-1785688294`, `agents.bak-2026-08-02`) are left in place —
+  no automated cleanup was added (D4). All of this is covered by a new 9-case
+  `harness/tests/test_install_global.sh`, isolated entirely via `HOME` overrides from `mktemp -d`;
+  it never touches the real `$HOME`.
+  KO: (1) 심링크를 따라간다(D1). `resolve_if_symlink()` 는 심링크가 아닌 경로는 그대로 두고,
+  살아있는 심링크는 `python3 -c 'import os,sys;print(os.path.realpath(...))'` 로 물리 경로를 구해
+  풀며, 끊긴 심링크면 아무것도 건드리기 전에 exit 1 한다. `global_claude` · `global_agents_dir`
+  양쪽 모두 대입 직후, `mkdir -p`/백업보다 앞에서 `do_install_global` 과 `do_uninstall_global`
+  둘 다에 적용했다. `~/.claude` 디렉터리 자신이 심링크인 경우는 범위 밖이다.
+  (2) `require_python3()`(D2) 를 같은 파일의 `require_jq` 와 정확히 같은 형태(`command -v` 확인 +
+  `log` 두 줄 + `exit 1`)로 만들어, `do_install_global` 과 `do_uninstall_global` 각각의 첫
+  실행문 — `mkdir -p` 나 백업보다 앞 — 으로 호출한다. (3) 무변화 백업을 만들지 않는다(같은
+  변경의 일부, N4 를 `copy_with_backup` 의 기존 파일별 `cmp -s` 패턴으로 확장): 디렉터리 단위
+  `agents` 백업은 새 `agents_dir_unchanged()` 술어(소스 대비 `cmp -s` 5회, `diff -r` 아님 —
+  `diff -r` 은 여기서 항상 다르다고 답한다: 대상 디렉터리엔 사용자 자신의 다른 에이전트 파일이
+  있을 수 있고 소스에는 정확히 5개뿐이기 때문)로 감쌌고, `CLAUDE.md` 백업은 그것을 변형하는
+  `mv` 직전으로 옮겨 `! cmp -s "$merged" "$global_claude"` 로 감쌌다. (4) 이 머신에 이미 쌓인
+  백업 3개(`CLAUDE.md.bak-1785688294`, `agents.bak-1785688294`, `agents.bak-2026-08-02`)는 그대로
+  둔다 — 자동 정리는 추가하지 않았다(D4). 이 전부를 신규 9케이스
+  `harness/tests/test_install_global.sh` 가 덮는다 — `mktemp -d` 의 `HOME` 오버라이드로만
+  격리하며 실제 `$HOME` 은 절대 건드리지 않는다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: Abort the install instead of following a live symlink — rejected (D1). A user who put
+  `~/.claude/agents` or `~/.claude/CLAUDE.md` under a dotfiles repo did so deliberately to route
+  content through it; aborting would make the installer unusable for that (arguably more careful)
+  setup, while a dangling symlink still aborts since the user's config is already broken there.
+  Using `readlink -f` instead of the `python3` one-liner — rejected: not present on older macOS,
+  and `python3` is already a guaranteed dependency after the W5 fix. Using `diff -r` for the
+  directory no-op check — rejected (D3): it answers the wrong question, since the target directory
+  routinely holds files the source doesn't.
+  KO: 살아있는 심링크를 따라가는 대신 설치를 중단하는 안 — 기각(D1). `~/.claude/agents` 나
+  `~/.claude/CLAUDE.md` 를 dotfiles 저장소 아래 둔 사용자는 의도적으로 그렇게 한 것이다 —
+  중단하면 그 (오히려 더 신중한) 구성에서 설치기를 못 쓰게 된다. 끊긴 심링크는 사용자 설정이
+  이미 깨진 상태이므로 여전히 중단한다. `python3` 한 줄 대신 `readlink -f` 를 쓰는 안 — 기각:
+  구형 macOS 에 없고, W5 수정 이후 `python3` 은 이미 보증된 의존성이다. 디렉터리 무변화 확인에
+  `diff -r` 을 쓰는 안 — 기각(D3): 틀린 질문에 답한다. 대상 디렉터리에는 소스에 없는 사용자
+  자신의 파일이 늘 있을 수 있기 때문이다.
+- 사유 (Rationale):
+  EN: All three fixes share one principle: the installer must never silently destroy or
+  misrepresent something the user already had, and must not create side effects (files, backups)
+  it cannot justify. Symlink resolution keeps a dotfiles-managed config intact instead of quietly
+  replacing it. The upfront `python3` check turns a mid-install crash into a clean no-op abort.
+  Skipping no-op backups keeps `.bak-*` a meaningful signal ("something changed here") instead of
+  accumulating on every run regardless of content.
+  KO: 세 수정 모두 하나의 원칙을 공유한다 — 설치기는 사용자가 이미 가진 것을 조용히 파괴하거나
+  왜곡해서는 안 되고, 정당화할 수 없는 부작용(파일, 백업)을 만들어서도 안 된다. 심링크 해석은
+  dotfiles 로 관리되는 설정을 조용히 대체하지 않고 그대로 지킨다. `python3` 사전 확인은 설치
+  중간 크래시를 깔끔한 무변화 중단으로 바꾼다. 무변화 백업을 건너뛰는 것은 `.bak-*` 를 "여기서
+  뭔가 바뀌었다"는 의미 있는 신호로 유지한다 — 내용과 무관하게 매 실행 쌓이는 대신.
+- 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
+- 연결 (Links): `harness/install.sh` · `harness/tests/test_install_global.sh` · `harness/CORE.md` ·
+  `.claude/harness-facts.md`
