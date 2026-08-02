@@ -116,14 +116,40 @@ SEGMENT_RE = re.compile(r"\|\||&&|(?<!>)[|;&\n]")
 
 PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_./~-]+")
 
-# EN: A `cd` segment with a literal argument (not `-`, not empty). We deliberately
+# EN: A `cd` segment with a literal argument (not `-`, not empty). Option flags
+#     (-L/-P/-e/-@) and the `--` end-of-options marker are skipped so `cd -P base`
+#     tracks like `cd base`; a trailing `# comment` is ignored. The argument keeps
+#     its quotes here and is unquoted at use — `cd "base"` must track exactly like
+#     `cd base`, since quoting a path is the ordinary way to write it. We deliberately
 #     do not try to resolve `cd $VAR` correctly — its target segment still gets
 #     tracked as a literal (bogus) directory, which never matches a real product
 #     glob, i.e. it degrades to a miss rather than a false block.
-# KO: 리터럴 인자를 가진 `cd` 세그먼트(`-`도 빈 인자도 아님). `cd $VAR` 를 올바르게
-#     풀려고 하지 않는다 — 대상 세그먼트가 리터럴(가짜) 디렉터리로 추적되는데, 이는
-#     실제 product 글롭에 매치되지 않으므로 오차단이 아니라 미탐으로 완화된다.
-CD_RE = re.compile(r"^\s*cd(?:\s+(\S+))?\s*$")
+# KO: 리터럴 인자를 가진 `cd` 세그먼트(`-`도 빈 인자도 아님). 옵션 플래그(-L/-P/-e/-@)와
+#     옵션 종료 표시 `--` 를 건너뛰어 `cd -P base` 가 `cd base` 와 같이 추적되게 하고,
+#     끝의 `# 주석` 은 무시한다. 인자는 따옴표를 단 채로 잡아 쓰는 자리에서 벗긴다 —
+#     경로에 따옴표를 씌우는 것은 평범한 표기이므로 `cd "base"` 는 `cd base` 와 정확히
+#     같이 추적돼야 한다. `cd $VAR` 를 올바르게 풀려고 하지 않는다 — 대상 세그먼트가
+#     리터럴(가짜) 디렉터리로 추적되는데, 이는 실제 product 글롭에 매치되지 않으므로
+#     오차단이 아니라 미탐으로 완화된다.
+CD_RE = re.compile(r"^\s*cd\b(.*)$")
+CD_FLAGS = ("-L", "-P", "-e", "-@", "-LP", "-PL", "--")
+
+
+def cd_target(rest):
+    """
+    EN: The directory a `cd` segment lands in, or None to reset to the repo root.
+        `rest` is everything after the `cd` word. Parsed in code, not in the regex,
+        so no nested quantifier can backtrack on a long command line.
+    KO: `cd` 세그먼트가 도착하는 디렉터리. None 이면 저장소 루트로 되돌린다는 뜻이다.
+        `rest` 는 `cd` 낱말 뒤 전부다. 정규식이 아니라 코드로 파싱한다 — 중첩 수량자가
+        긴 명령줄에서 백트래킹하지 않게 하려는 것이다.
+    """
+    words = rest.split("#", 1)[0].split()
+    while words and words[0] in CD_FLAGS:
+        words.pop(0)
+    if not words or words[0] == "-":
+        return None
+    return words[0].strip("\"'")
 
 
 def repo_root():
@@ -362,11 +388,13 @@ def bash_targets(command, root, cfg):
     candidates = []
     cwd = root
     for seg in SEGMENT_RE.split(command):
+        # EN: A `cd` segment can still carry a redirect, and the shell opens that
+        #     redirect in the *current* directory before the cd takes effect — so
+        #     scan the segment first, then move cwd for the segments that follow.
+        # KO: `cd` 세그먼트도 리다이렉트를 달 수 있고, 셸은 cd 가 적용되기 전 *현재*
+        #     디렉터리에서 그 리다이렉트를 연다 — 그래서 세그먼트를 먼저 검사하고
+        #     그다음에 이후 세그먼트를 위해 cwd 를 옮긴다.
         cd_match = CD_RE.match(seg)
-        if cd_match:
-            arg = cd_match.group(1)
-            cwd = root if arg in (None, "-") else resolve_target(cwd, arg)
-            continue
         if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
             candidates.extend((cwd, t) for t in PATH_TOKEN_RE.findall(seg))
         if any(re.search(m, seg) for m in LAST_TOKEN_WRITE_MARKERS):
@@ -374,6 +402,9 @@ def bash_targets(command, root, cfg):
             if path_tokens:
                 candidates.append((cwd, path_tokens[-1]))
         candidates.extend((cwd, t) for t in REDIRECT_RE.findall(seg))
+        if cd_match:
+            arg = cd_target(cd_match.group(1))
+            cwd = root if arg is None else resolve_target(cwd, arg)
     hits = []
     for cwd_at, token in candidates:
         path = resolve_target(cwd_at, token)

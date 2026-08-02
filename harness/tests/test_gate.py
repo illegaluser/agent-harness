@@ -526,6 +526,49 @@ def test_bash_known_misses():
         shutil.rmtree(root)
 
 
+def test_bash_cd_argument_forms():
+    """
+    EN: `cd` tracking must not depend on how the path is spelled. Quoting a path
+        is ordinary, so `cd "base"` has to track exactly like `cd base` — when it
+        did not, a write to the gate's own source file went through.
+    KO: `cd` 추적이 경로 표기 방식에 좌우되면 안 된다. 경로에 따옴표를 씌우는 것은
+        평범한 표기이므로 `cd "base"` 는 `cd base` 와 정확히 같이 추적돼야 한다 —
+        그렇지 않았을 때 게이트 자기 소스 파일에 대한 쓰기가 통과했다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+        }
+        blocked = [
+            ("double-quoted cd target tracked", 'cd "base" && echo x > f.md'),
+            ("single-quoted cd target tracked", "cd 'base' && echo x > f.md"),
+            ("cd past the -- end-of-options marker tracked", "cd -- base && echo x > f.md"),
+            ("cd with a -P flag tracked", "cd -P base && echo x > f.md"),
+            ("cd with flag, marker and quotes tracked", "cd -L -- 'base' && echo x > f.md"),
+            ("cd with a trailing comment tracked", "cd base # go\necho x > f.md"),
+            ("cd then a parent-relative write tracked", "cd base/sub && echo x > ../f.md"),
+        ]
+        for name, command in blocked:
+            p["tool_input"] = {"command": command}
+            check(name, run(root, p)[0] == 2)
+
+        allowed = [
+            ("cd outside the repo then write allowed", "cd /tmp && echo x > out.txt"),
+            ("cd with no argument resets to root", "cd && echo x > out.txt"),
+            ("cd - resets to root", "cd - && echo x > out.txt"),
+            ("cd into a product dir, read-only, allowed", "cd base && grep -rn foo ."),
+            ("cd back out before writing allowed", "cd base && cd /tmp && echo x > f.md"),
+            ("cd into a non-product dir allowed", "cd notes && echo x > f.md"),
+        ]
+        for name, command in allowed:
+            p["tool_input"] = {"command": command}
+            check(name, run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
 def test_exempt_subtree_covers_its_directory():
     root = make_repo(dict(ENFORCING, exempt=["base/sub/**"]))
     try:
