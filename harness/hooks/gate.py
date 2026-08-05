@@ -271,6 +271,32 @@ def counter_file(root, payload):
     return os.path.join(state_dir(root), "gate-%s.json" % (sid or "nosession"))
 
 
+def approval_file(root, payload):
+    """
+    EN: Approval lives OUTSIDE the turn counter on purpose. It is not a property
+        of a turn — it is the fact that the user authorised delegation in this
+        session. The counter is reset on every turn change and deleted at Stop,
+        so storing approval there made it evaporate whenever the user said one
+        more word between approving a plan and the spawn. That left the main
+        thread unable to write (budget) AND unable to delegate (approval gone) —
+        a dead end whose only escape was turning the gate off.
+        Lifetime is bounded by two real things, not by an invented timeout:
+        the session id (a different session cannot see it) and single use
+        (spawn_gate deletes it as it consumes it). Cleanup piggybacks on
+        sweep_stale_turns()'s existing 24h rule.
+    KO: 승인은 일부러 턴 카운터 **밖**에 둔다. 승인은 턴의 속성이 아니라 "사용자가 이
+        세션에서 위임을 허가했다"는 사실이다. 카운터는 턴이 바뀔 때마다 리셋되고 Stop
+        에서 삭제되므로, 거기 승인을 담으면 계획 승인과 스폰 사이에 사용자가 한 마디만
+        더 해도 증발했다. 그러면 메인은 쓰기도(예산) 위임도(승인 소실) 못 하는 막다른
+        길에 갇히고, 빠져나갈 길은 게이트를 끄는 것뿐이었다.
+        수명은 자작 시간 문턱이 아니라 실재하는 두 가지로만 묶는다 — 세션 id(다른
+        세션은 볼 수 없다)와 단일 사용(spawn_gate 가 소비하며 삭제한다).
+        청소는 sweep_stale_turns() 의 기존 24시간 규칙에 얹는다.
+    """
+    sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
+    return os.path.join(state_dir(root), "approval-%s.json" % (sid or "nosession"))
+
+
 def read_counter(path, turn):
     """
     EN: A stored turn is only invalidated when we can *prove* the turn changed —
@@ -526,9 +552,25 @@ def spawn_gate(root, cfg, payload, base):
         emit_metric(root, cfg, dict(base, decision="allow", reason="spawn"))
         allow()
 
+    # EN: One approval buys exactly one spawn, whichever path recognises it —
+    #     the in-turn flag or the standing file. Consuming on both paths is what
+    #     keeps the gate exactly as strong as before; only its *reach* changed,
+    #     from one turn to until-used.
+    # KO: 승인 하나는 스폰 하나를 산다. 턴 내 플래그든 세션 파일이든 인식한 쪽이
+    #     소비한다. 양쪽 다 소비해야 게이트 강도가 종전과 같다 — 바뀐 것은 강도가
+    #     아니라 **유효 범위**뿐이다(한 턴 → 쓸 때까지).
+    apath = approval_file(root, payload)
     _, state = load_turn(root, payload)
-    if state["approved"]:
-        emit_metric(root, cfg, dict(base, decision="allow", reason="spawn-approved"))
+    carried = os.path.exists(apath)
+    if state["approved"] or carried:
+        if carried:
+            try:
+                os.remove(apath)
+            except OSError:
+                pass
+        emit_metric(root, cfg, dict(
+            base, decision="allow",
+            reason="spawn-approved" if state["approved"] else "spawn-approved-carried"))
         allow()
 
     enforcing = cfg.get("approval_gate") and cfg.get("enforce")
@@ -588,6 +630,8 @@ def handle_posttooluse(root, cfg, payload):
         cpath, state = load_turn(root, payload)
         state["approved"] = True
         write_counter(cpath, state)
+        # EN/KO: also record it outside the turn — see approval_file().
+        write_counter(approval_file(root, payload), {"approved": True})
         emit_metric(root, cfg, {
             "event": "PostToolUse",
             "session": payload.get("session_id"),
@@ -787,7 +831,7 @@ def sweep_stale_turns(root, keep_hours=24):
         d = state_dir(root)
         cutoff = time.time() - keep_hours * 3600
         for name in os.listdir(d):
-            if name.startswith("gate-") and name.endswith(".json"):
+            if name.startswith(("gate-", "approval-")) and name.endswith(".json"):
                 p = os.path.join(d, name)
                 if os.path.getmtime(p) < cutoff:
                     os.remove(p)

@@ -817,17 +817,17 @@ def test_close_gate_off_when_not_enforcing():
         shutil.rmtree(root)
 
 
-def spawn(root, subagent_type, tool="Agent"):
+def spawn(root, subagent_type, tool="Agent", session="sess-1"):
     return run(root, {
-        "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+        "hook_event_name": "PreToolUse", "session_id": session, "prompt_id": "t1",
         "cwd": root, "tool_name": tool, "tool_use_id": "tu-1",
         "tool_input": {"subagent_type": subagent_type, "prompt": "..."},
     })
 
 
-def approve(root):
+def approve(root, session="sess-1"):
     return run(root, {
-        "hook_event_name": "PostToolUse", "session_id": "sess-1", "prompt_id": "t1",
+        "hook_event_name": "PostToolUse", "session_id": session, "prompt_id": "t1",
         "cwd": root, "tool_name": "ExitPlanMode", "tool_input": {}, "tool_response": {},
     })
 
@@ -877,6 +877,55 @@ def test_approval_does_not_survive_the_turn():
         check("approved maker runs in the same turn", spawn(root, "maker")[0] == 0)
         stop(root)  # turn boundary
         check("next turn requires fresh approval", spawn(root, "maker")[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_approval_survives_a_turn_boundary_until_used():
+    """
+    EN: The gate must not strand the main thread. Once the write budget is spent,
+        delegation is the only sanctioned way forward — so an approval given in
+        one turn has to still be there when the spawn happens, even if the user
+        said one more word in between. Scoping approval to a single turn made
+        writing and delegating both impossible, and the only escape was turning
+        the gate off. Reach changed; strength did not (see the next test).
+    KO: 게이트가 메인을 막다른 길에 가두면 안 된다. 쓰기 예산을 다 쓰면 위임이 유일한
+        정규 경로인데, 승인과 스폰 사이에 사용자가 한 마디만 더 해도 승인이 사라지면
+        쓰기도 위임도 불가능해지고 빠져나갈 길은 게이트를 끄는 것뿐이었다.
+        바뀐 것은 유효 범위이고 강도는 그대로다(다음 테스트).
+    """
+    root = make_repo(ENFORCING)
+    try:
+        approve(root)
+        stop(root)  # turn boundary — and Stop deletes the turn counter
+        check("approval carried across the turn boundary", spawn(root, "maker")[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_carried_approval_is_single_use():
+    """
+    EN/KO: 한 번의 승인은 한 번의 스폰만 산다 — 턴을 넘어와도 마찬가지다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        approve(root)
+        stop(root)
+        check("first spawn consumes the carried approval", spawn(root, "maker")[0] == 0)
+        check("second spawn needs a new approval", spawn(root, "maker")[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_approval_does_not_leak_across_sessions():
+    """
+    EN/KO: 승인은 세션 id 로 묶인다. 다른 세션이 남의 승인을 주워 쓸 수 없다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        approve(root, session="sess-a")
+        check("another session sees no approval",
+              spawn(root, "maker", session="sess-b")[0] == 2)
     finally:
         shutil.rmtree(root)
 
