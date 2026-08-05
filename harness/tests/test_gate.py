@@ -487,13 +487,25 @@ def test_bash_directory_targets():
         p["tool_input"] = {"command": "cp -r /tmp/x base/sub"}
         check("cp into a product subdir DENIED", run(root, p)[0] == 2)
 
+        # EN/KO: `git rm --cached` 는 인덱스만 건드리고 워킹트리 파일은 남긴다.
+        #        `--cached` 없는 `git rm` 은 실제로 지우므로 계속 막는다.
         p["tool_input"] = {"command": "git rm --cached base/f.md"}
-        check("over-block accepted: git rm --cached is treated as a delete",
-              run(root, p)[0] == 2)
+        check("git rm --cached leaves the file, allowed", run(root, p)[0] == 0)
 
+        p["tool_input"] = {"command": "git rm base/f.md"}
+        check("git rm without --cached DENIED", run(root, p)[0] == 2)
+
+        # EN/KO: `docker rm base` 의 `base` 는 컨테이너 이름이지 경로가 아니다.
         p["tool_input"] = {"command": "docker rm base"}
-        check("over-block accepted: docker rm of a name matching a product dir",
-              run(root, p)[0] == 2)
+        check("docker rm names a container, not a path, allowed", run(root, p)[0] == 0)
+
+        # EN/KO: A4 — 마커 목록에 새로 들어온 쓰기 명령들.
+        for cmd in ("awk -i inplace 1 base/f.md", "ed -s base/f.md",
+                    "git checkout -- base/f.md", "git restore base/f.md",
+                    "git apply p.diff base/f.md", "truncate -s 0 base/f.md",
+                    "ln -sf /etc/passwd base/f.md"):
+            p["tool_input"] = {"command": cmd}
+            check("in-place writer DENIED: %s" % cmd.split()[0], run(root, p)[0] == 2)
     finally:
         shutil.rmtree(root)
 
@@ -877,6 +889,56 @@ def test_approval_does_not_survive_the_turn():
         check("approved maker runs in the same turn", spawn(root, "maker")[0] == 0)
         stop(root)  # turn boundary
         check("next turn requires fresh approval", spawn(root, "maker")[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_symlink_out_of_the_repo_is_still_product():
+    """
+    EN: A symlink inside a product dir pointing outside the repo used to escape
+        the gate entirely — realpath() made it start with "..", so is_product()
+        called it foreign and BOTH the write budget and the bash gate waved it
+        through. The name written is a product name; where the inode lives is
+        not the user's declaration of what is protected.
+    KO: 산출물 디렉터리 안에서 저장소 밖을 가리키는 심링크가 게이트를 통째로 빠져나갔다 —
+        realpath() 때문에 ".." 로 시작해 is_product() 가 남의 것으로 판정했고, 쓰기 예산도
+        bash 게이트도 그냥 통과시켰다. 쓰인 이름이 산출물 이름이다. inode 의 위치는
+        무엇을 보호할지에 대한 사용자의 선언이 아니다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        outside = tempfile.mkdtemp()
+        target = os.path.join(outside, "elsewhere.md")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+        link = os.path.join(root, "base", "link.md")
+        os.symlink(target, link)
+        try:
+            check("a symlink escaping the repo still counts as product",
+                  run(root, write_payload(root, link))[0] == 0)
+            check("and it consumed a budget slot",
+                  run(root, write_payload(root, "base/b.md"))[0] == 0)
+            check("so the third write is blocked",
+                  run(root, write_payload(root, "base/c.md"))[0] == 2)
+        finally:
+            shutil.rmtree(outside)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_relative_file_path_is_resolved_against_the_repo():
+    """
+    EN/KO: 상대경로 file_path 는 프로세스 cwd 가 아니라 저장소 루트 기준으로 푼다.
+           bash_targets 는 이미 그렇게 하는데 쓰기 게이트만 안 했다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        check("relative product path counted",
+              run(root, write_payload(root, "base/r1.md"))[0] == 0)
+        check("second relative product path counted",
+              run(root, write_payload(root, "base/r2.md"))[0] == 0)
+        check("third is blocked, so both were counted",
+              run(root, write_payload(root, "base/r3.md"))[0] == 2)
     finally:
         shutil.rmtree(root)
 

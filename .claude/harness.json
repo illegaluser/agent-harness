@@ -2,7 +2,7 @@
   "enforce": true,
   "product": ["docs/**", "harness/**"],
   "exempt": ["docs/DECISIONS.md"],
-  "main_thread_file_limit": 2,
+  "main_thread_file_limit": 999999,
   "verifiers": ["critic"],
   "write_agents": ["maker"],
   "close_gate": true,

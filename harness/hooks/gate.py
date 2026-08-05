@@ -81,12 +81,37 @@ SPAWN_TOOLS = ("Agent", "Task")
 #     no file to delete, and blocking it blocked ordinary container work.
 # KO(cont): `(?<!-)` 는 플래그가 명령으로 읽히지 않게 한다 — `docker run --rm` 은 지울
 #     파일을 지목하지 않는데, 이것을 막으면 평범한 컨테이너 작업이 막혔다.
+#     `rm` is exempted when it is `git rm --cached`: that stages a removal in the
+#     index and leaves the working tree file alone, so blocking it blocked
+#     ordinary un-tracking. Plain `git rm` (no --cached) does delete the file and
+#     stays blocked. `docker` is excluded outright — `docker rm docs` names a
+#     container, not a path, and there is no container subcommand that writes a
+#     host path we can see from the command line alone.
+# KO(cont): `git rm --cached` 는 인덱스에만 삭제를 올리고 워킹트리 파일은 그대로 두므로
+#     예외로 둔다 — 막으면 평범한 추적 해제가 막혔다. `--cached` 없는 `git rm` 은 파일을
+#     실제로 지우므로 계속 막는다. `docker` 는 통째로 제외한다 — `docker rm docs` 의
+#     `docs` 는 컨테이너 이름이지 경로가 아니고, 명령줄만 보고 호스트 경로를 쓴다고
+#     판정할 수 있는 컨테이너 하위명령이 없다.
 ARG_WRITE_MARKERS = (
     r"(?<!-)\bsed\s+[^\n]*-\w*i",
     r"(?<!-)\bperl\s+[^\n]*-\w*i",
+    r"(?<!-)\bawk\s+[^\n]*-i\s*inplace",
+    r"(?<!-)\bed\s",
+    r"(?<!-)\bex\s+[^\n]*-\w*s",
     r"(?<!-)\btee\b",
+    r"(?<!-)\btruncate\b",
     r"(?<!-)\brm\b",
     r"(?<!-)\brmdir\b",
+    r"\bgit\b[^\n]*\b(?:checkout|restore|apply)\b",
+)
+
+# EN: Segments that look like a write marker but are not. Checked before the
+#     markers, so a match here means "not a target segment" outright.
+# KO: 쓰기 마커처럼 보이지만 아닌 세그먼트. 마커보다 먼저 검사하며, 여기 걸리면
+#     대상 세그먼트가 아닌 것으로 확정한다.
+WRITE_MARKER_EXEMPTIONS = (
+    r"\bgit\b[^\n]*\brm\b[^\n]*--cached\b",
+    r"\bdocker\b",
 )
 
 # EN: Writers whose target is the LAST path-shaped argument in the segment —
@@ -108,6 +133,7 @@ ARG_WRITE_MARKERS = (
 LAST_TOKEN_WRITE_MARKERS = (
     r"(?<!-)\bcp\b",
     r"(?<!-)\bmv\b",
+    r"(?<!-)\bln\b",
     r"^\s*(?:\S*/)?install(?=\s|$)",
 )
 
@@ -210,6 +236,33 @@ def rel_path(root, path):
         return path
 
 
+def rel_path_logical(root, path):
+    """
+    EN: The path as *written*, resolved against the repo root but WITHOUT
+        following symlinks. realpath() alone let a symlink inside a product
+        directory point outside the repo; the resolved path then started with
+        ".." and is_product() called it foreign, so the write gate and the bash
+        gate both waved it through. The name the caller used is `docs/link.md`,
+        and that is a product path no matter where the inode lives.
+        This also fixes relative file_path: the write gate never resolved
+        against the root the way bash_targets does, so `docs/a.md` (relative)
+        was judged against the process cwd.
+    KO: **쓰인 그대로**의 경로를 저장소 루트 기준으로 풀되 심링크는 따라가지 않는다.
+        realpath() 만 쓰면 산출물 디렉터리 안의 심링크가 저장소 밖을 가리킬 때 해석
+        결과가 ".." 로 시작해 is_product() 가 남의 것으로 판정했고, 쓰기 게이트와 bash
+        게이트가 둘 다 통과시켰다. 호출자가 쓴 이름은 `docs/link.md` 이고, inode 가
+        어디에 있든 그것은 산출물 경로다.
+        상대경로 file_path 도 여기서 같이 고쳐진다 — 쓰기 게이트는 bash_targets 와
+        달리 루트 기준으로 풀지 않아 `docs/a.md` 를 프로세스 cwd 기준으로 판정했다.
+    """
+    try:
+        if not os.path.isabs(path):
+            path = os.path.join(root, path)
+        return os.path.relpath(os.path.normpath(path), os.path.normpath(root))
+    except (OSError, ValueError):
+        return path
+
+
 def matches_any(rel, patterns):
     """
     EN: fnmatch's `*` crosses `/`, which is what we want: "base/**" and "base/*"
@@ -240,14 +293,30 @@ def matches_any(rel, patterns):
 
 
 def is_product(root, cfg, path):
+    """
+    EN: A path is product if EITHER the name as written or the inode it resolves
+        to lands under a product glob. One-sided judgement leaked both ways: a
+        symlink out of the repo escaped the gate entirely (physical-only), and a
+        symlink from outside INTO docs/ would escape a name-only check. Exempt is
+        checked first and on both forms, so exempting a path cannot be defeated
+        by reaching it through the other form.
+    KO: 쓰인 이름과 실제 도달하는 inode 중 **하나라도** 산출물 글롭 아래면 산출물이다.
+        한쪽만 보면 양방향으로 샜다 — 저장소 밖을 가리키는 심링크는 물리 경로만 볼 때
+        게이트를 통째로 빠져나갔고, 밖에서 docs/ 안으로 걸린 심링크는 이름만 볼 때
+        빠져나간다. exempt 는 먼저, 그리고 양쪽 형태 모두에 대해 검사한다 — 다른 형태로
+        접근해서 면제를 무력화할 수 없게.
+    """
     if not path:
         return False
-    rel = rel_path(root, path)
-    if rel.startswith(".."):
-        return False  # outside the repo — not our product
-    if matches_any(rel, cfg.get("exempt", [])):
+    forms = []
+    for rel in (rel_path(root, path), rel_path_logical(root, path)):
+        if rel and not rel.startswith(".."):
+            forms.append(rel)
+    if not forms:
+        return False  # outside the repo by both names — not our product
+    if any(matches_any(rel, cfg.get("exempt", [])) for rel in forms):
         return False
-    return matches_any(rel, cfg.get("product", []))
+    return any(matches_any(rel, cfg.get("product", [])) for rel in forms)
 
 
 def turn_key(payload):
@@ -440,6 +509,11 @@ def bash_targets(command, root, cfg):
         #     디렉터리에서 그 리다이렉트를 연다 — 그래서 세그먼트를 먼저 검사하고
         #     그다음에 이후 세그먼트를 위해 cwd 를 옮긴다.
         cd_match = CD_RE.match(seg)
+        if any(re.search(m, seg) for m in WRITE_MARKER_EXEMPTIONS):
+            if cd_match:
+                arg = cd_target(cd_match.group(1))
+                cwd = root if arg is None else resolve_target(cwd, arg)
+            continue
         if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
             candidates.extend((cwd, t) for t in PATH_TOKEN_RE.findall(seg))
         if any(re.search(m, seg) for m in LAST_TOKEN_WRITE_MARKERS):
