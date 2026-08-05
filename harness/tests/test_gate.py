@@ -20,6 +20,7 @@ Run: python3 harness/tests/test_gate.py
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -663,6 +664,11 @@ def test_write_gate_on_directory_path():
 
 
 def test_observe_mode_never_denies():
+    """
+    EN/KO: `enforce:false` 는 새로 설치한 프로젝트의 기본값이다. 한 세션 굴려보며
+           오작동을 확인하는 동안 아무것도 막으면 안 된다 — 관측 단계에서 차단하면
+           도입 자체가 위험해지고, 사용자는 켜보기도 전에 게이트를 꺼버린다.
+    """
     root = make_repo(dict(ENFORCING, enforce=False))
     try:
         codes = [run(root, write_payload(root, "base/o%d.md" % i))[0] for i in range(1, 7)]
@@ -727,6 +733,11 @@ def blocked(out):
 
 
 def test_close_gate_blocks_unverified_delegation():
+    """
+    EN/KO: 위임한 턴은 메인이 직접 감당하지 못한 크기라서 위임한 것이다. 그 결과를
+           아무도 안 본 채 턴이 끝나면 검증이 영영 일어나지 않는다 — 다음 턴은 이미
+           바뀐 파일 위에서 시작한다. 유한 차단(max_close_blocks)이라 세션은 안 잠긴다.
+    """
     root = make_repo(ENFORCING)
     try:
         check("clean turn (no writes) never blocks", not blocked(stop(root)[1]))
@@ -771,6 +782,11 @@ def test_verifier_satisfies_close_gate():
 
 
 def test_non_verifier_does_not_satisfy_close_gate():
+    """
+    EN/KO: maker 가 끝났다는 것은 변경이 생겼다는 뜻이지 검증됐다는 뜻이 아니다.
+           아무 서브에이전트나 close 게이트를 풀면, 위임한 턴은 언제나 maker 로
+           끝나므로 게이트가 사실상 없는 것이 된다. `verifiers` 목록만 푼다.
+    """
     root = make_repo(ENFORCING)
     try:
         run(root, write_payload(root, "base/v2.md", actor="sub"))
@@ -831,11 +847,16 @@ def test_close_gate_off_when_not_enforcing():
         shutil.rmtree(root)
 
 
-def spawn(root, subagent_type, tool="Agent", session="sess-1"):
+def spawn(root, subagent_type, tool="Agent", session="sess-1", prompt=None):
+    # EN/KO: 기본 브리프는 실재하는 파일을 가리킨다 — 인수인계 게이트를 통과시켜
+    #        다른 게이트를 시험하려는 테스트가 그것 때문에 막히지 않게 한다.
+    #        인수인계 게이트 자체는 prompt 를 넘겨 따로 시험한다.
+    if prompt is None:
+        prompt = "facts: .claude/harness.json"
     return run(root, {
         "hook_event_name": "PreToolUse", "session_id": session, "prompt_id": "t1",
         "cwd": root, "tool_name": tool, "tool_use_id": "tu-1",
-        "tool_input": {"subagent_type": subagent_type, "prompt": "..."},
+        "tool_input": {"subagent_type": subagent_type, "prompt": prompt},
     })
 
 
@@ -847,6 +868,13 @@ def approve(root, session="sess-1"):
 
 
 def test_approval_gate_blocks_unapproved_maker():
+    """
+    EN/KO: maker 스폰은 계획이 편집으로 바뀌기 직전의 마지막 관측 지점이다. 훅이
+           실제로 볼 수 있는 사용자 승인은 수락된 ExitPlanMode 뿐이고, 오케스트레이터가
+           "승인받았다"고 주장하는 것은 자기 인증이라 신호가 아니다.
+           단, 승인의 유효 범위는 한 턴이 아니다 — 그렇게 좁히면 막다른 길이 된다
+           (test_approval_survives_a_turn_boundary_until_used 참조).
+    """
     root = make_repo(ENFORCING)
     try:
         code, _, err = spawn(root, "maker")
@@ -1016,6 +1044,140 @@ def test_approval_does_not_leak_across_sessions():
               spawn(root, "maker", session="sess-b")[0] == 2)
     finally:
         shutil.rmtree(root)
+
+
+def test_handoff_gate_blocks_a_brief_that_cites_nothing():
+    """
+    EN: A subagent starts with an empty context. Whatever the orchestrator already
+        established reaches it only if written down, so a prose-only brief makes it
+        re-derive everything — three makers burned 12 minutes that way in one
+        session. The hook cannot judge a brief's quality, but it can see that the
+        brief names no file at all, which is the cheap failure worth blocking.
+    KO: 서브에이전트는 빈 컨텍스트로 시작한다. 오케스트레이터가 이미 확인한 것은 적어야만
+        전달되므로, 산문뿐인 브리프는 전부 재조사하게 만든다 — 한 세션에서 Maker 셋이
+        그렇게 12분을 태웠다. 훅은 브리프의 품질은 못 보지만 **파일을 하나도 안 가리킨다**는
+        것은 볼 수 있고, 그것이 막을 가치가 있는 싼 실패다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        approve(root)
+        check("a brief citing no file is DENIED",
+              spawn(root, "maker", prompt="고쳐라. 알아서 찾아봐라.")[0] == 2)
+        approve(root)
+        check("a brief citing a real file passes",
+              spawn(root, "maker", prompt="사실은 .claude/harness.json 에 있다")[0] == 0)
+        approve(root)
+        check("a path that does not exist does not count",
+              spawn(root, "maker", prompt="사실은 docs/NOPE-does-not-exist.md 에 있다")[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_handoff_gate_leaves_other_roles_alone():
+    """
+    EN/KO: scout 는 조사하러 가는 역할이라 넘겨줄 사실이 아직 없다. 인수인계를
+           요구하면 첫 조사 자체가 불가능해진다 — handoff_roles 밖이다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        check("scout spawns with a prose-only brief",
+              spawn(root, "scout", prompt="이 저장소를 조사하라")[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_sanctioned_path_runs_end_to_end():
+    """
+    EN: THE dead-end test. Every other test in this file asks "is this blocked
+        here?"; only this one asks "does the sanctioned route reach the end?"
+        Budget spent -> plan approved -> turn boundary -> maker spawned ->
+        subagent writes -> critic finishes -> turn closes. A gate that blocks a
+        step of its own prescribed escape route is unusable, and a suite that
+        only tests blocking cannot tell the difference. This exact sequence was
+        broken in production: approval was scoped to one turn, so the moment the
+        user said anything between approving and delegating, writing AND
+        delegating were both impossible and the only way out was to switch the
+        gate off.
+    KO: **막다른 길 테스트.** 이 파일의 다른 모든 테스트는 "여기서 막히는가"를 묻는다.
+        이것만이 "규정된 경로가 끝까지 가는가"를 묻는다.
+        예산 소진 → 계획 승인 → 턴 경계 → maker 스폰 → 서브에이전트 쓰기 → critic 종료
+        → 턴 종료. 자기가 지정한 탈출 경로의 한 단계를 스스로 막는 게이트는 쓸 수 없고,
+        차단만 시험하는 슈트는 그 차이를 구분하지 못한다. 실제로 이 시퀀스가 깨져 있었다 —
+        승인이 한 턴만 유효해서, 승인과 위임 사이에 사용자가 한 마디만 하면 쓰기도 위임도
+        불가능해지고 빠져나갈 길은 게이트를 끄는 것뿐이었다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        # 1. main thread spends its whole write budget
+        check("first direct write allowed",
+              run(root, write_payload(root, "base/e1.md"))[0] == 0)
+        check("second direct write allowed",
+              run(root, write_payload(root, "base/e2.md"))[0] == 0)
+        check("third is blocked — delegation is now the only way forward",
+              run(root, write_payload(root, "base/e3.md"))[0] == 2)
+
+        # 2. the prescribed escape: present a plan, get it accepted
+        check("plan approval is recorded", approve(root)[0] == 0)
+
+        # 3. the user says something else; the turn moves on
+        stop(root, prompt_id="turn-1")
+
+        # 4. delegation must still be possible in the new turn
+        res = spawn(root, "maker", session="sess-1", prompt="계획: .claude/harness.json")
+        check("maker still spawnable after the turn boundary", res[0] == 0, str(res[1]))
+
+        # 5. the subagent does the work the main thread could not
+        check("subagent writes are not rate-limited",
+              run(root, write_payload(root, "base/e3.md", actor="sub"))[0] == 0)
+
+        # 6. verification closes the turn
+        stop(root, event="SubagentStop", agent_type="critic")
+        check("the turn can now end", not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_limitation_assertions_carry_a_rationale():
+    """
+    EN: A test that asserts something is forbidden is either encoding a
+        requirement or freezing a defect, and the two are indistinguishable
+        without a stated reason. test_approval_does_not_survive_the_turn passed
+        for weeks while guarding a dead end. Requiring a docstring does not prove
+        the reason is good — it forces someone to write one, and the defect
+        showed itself the moment anybody tried.
+    KO: 무언가를 금지한다고 단언하는 테스트는 요구사항을 담고 있거나 결함을 고정하고
+        있는데, 이유가 적혀 있지 않으면 둘을 구분할 수 없다.
+        test_approval_does_not_survive_the_turn 은 막다른 길을 지키면서 몇 주를 통과했다.
+        docstring 을 요구한다고 이유가 옳아지지는 않는다 — 다만 누군가 이유를 쓰게 만들고,
+        쓰려는 순간 그 결함이 스스로 드러났다.
+    """
+    src = open(__file__, encoding="utf-8").read()
+    funcs = re.findall(r'^def (test_\w+)\(\):\n(\s*""")?', src, re.M)
+    markers = ("_does_not_", "_never_", "_requires_", "_blocks_", "_is_bounded")
+    missing = [n for n, doc in funcs if any(m in n for m in markers) and not doc]
+    check("every limitation-asserting test states why", not missing, str(missing))
+
+
+def test_numeric_thresholds_are_documented():
+    """
+    EN: main_thread_file_limit was 2 because an older spec said "1-2 directly,
+        plan from the third" — a number carried over, never derived, never
+        checked against a repo where the product globs cover most of the tree.
+        CORE.md forbids exactly that. This test makes the ban observable: a
+        numeric knob that CORE.md does not mention cannot ship.
+    KO: main_thread_file_limit 이 2였던 이유는 옛 스펙의 "1~2개는 직접, 3개째부터 계획"
+        한 문장뿐이었다. 옮겨 적었을 뿐 도출하지 않았고, product 글롭이 트리 대부분을
+        덮는 저장소에서 무슨 일이 나는지 확인한 적도 없다. CORE.md 가 금지한 바로 그것이다.
+        이 테스트가 그 금지를 관측 가능하게 만든다 — CORE.md 가 언급하지 않는 수치 손잡이는
+        나갈 수 없다.
+    """
+    core = os.path.join(os.path.dirname(GATE), "..", "CORE.md")
+    text = open(os.path.normpath(core), encoding="utf-8").read()
+    src = open(GATE, encoding="utf-8").read()
+    block = re.search(r"DEFAULTS = \{(.*?)\n\}", src, re.S).group(1)
+    numeric = re.findall(r'"(\w+)":\s*-?\d+', block)
+    missing = [k for k in numeric if k not in text]
+    check("every numeric threshold is explained in CORE.md", not missing, str(missing))
 
 
 def test_task_tool_is_gated_too():

@@ -60,6 +60,8 @@ DEFAULTS = {
     "max_close_blocks": 2,
     "approval_gate": True,
     "write_agents": ["maker"],
+    "handoff_gate": True,
+    "handoff_roles": ["architect", "maker"],
     "metrics": True,
 }
 
@@ -356,6 +358,41 @@ def stale_turn(root, payload):
     return saved is not None and saved != turn
 
 
+def brief_cites_file(root, prompt):
+    """
+    EN: True when the brief names at least one path that exists as a file. A
+        subagent starts with an empty context, so whatever the orchestrator has
+        already established — line numbers, repro commands, measured exit codes —
+        reaches it only if written down. A prose-only brief therefore forces the
+        subagent to re-derive all of it, and the 40-line report cap means the
+        next one re-derives it again.
+        This checks existence, not quality: no hook can tell whether the cited
+        file is any good. It closes the cheapest failure — spawning with nothing.
+        `~` is expanded and relative paths resolve against the repo root, the same
+        way resolve_target() treats bash arguments.
+    KO: 브리프가 실제로 존재하는 파일 경로를 하나라도 가리키면 참. 서브에이전트는 빈
+        컨텍스트로 시작하므로 오케스트레이터가 이미 확인한 것(파일:행·재현 명령·실측
+        exit code)은 적어두지 않으면 전달되지 않는다. 산문뿐인 브리프는 그래서 재조사를
+        강제하고, 40줄 보고 제한이 다음 에이전트에서 그 재조사를 반복시킨다.
+        검사하는 것은 존재이지 품질이 아니다 — 인용된 파일이 좋은지는 어떤 훅도 못 본다.
+        가장 싼 실패, 즉 아무것도 안 넘기고 띄우는 것만 막는다.
+        `~` 는 확장하고 상대경로는 저장소 루트 기준으로 푼다 — resolve_target() 이 bash
+        인자를 다루는 방식과 같다.
+    """
+    for tok in PATH_TOKEN_RE.findall(prompt or ""):
+        if "/" not in tok and "." not in tok:
+            continue
+        cand = os.path.expanduser(tok)
+        if not os.path.isabs(cand):
+            cand = os.path.join(root, cand)
+        try:
+            if os.path.isfile(cand):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def counter_file(root, payload):
     sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
     return os.path.join(state_dir(root), "gate-%s.json" % (sid or "nosession"))
@@ -629,6 +666,30 @@ def write_gate(root, cfg, payload, base, actor, rel):
     allow()
 
 
+def handoff_gate(root, cfg, base, sub, prompt):
+    """
+    EN: The one part of "hand over what you already know" a hook can observe.
+        Returns silently when the brief is fine; denies when it names no file.
+        See brief_cites_file() for why this is the failure worth blocking.
+    KO: "아는 것을 넘겨라" 중 훅이 볼 수 있는 유일한 부분. 브리프가 멀쩡하면 조용히
+        돌아가고, 파일을 하나도 안 가리키면 차단한다. 왜 이것이 막을 가치가 있는
+        실패인지는 brief_cites_file() 주석에 있다.
+    """
+    if sub not in cfg.get("handoff_roles", []):
+        return
+    if not (cfg.get("handoff_gate") and cfg.get("enforce")):
+        return
+    if brief_cites_file(root, prompt):
+        return
+    emit_metric(root, cfg, dict(base, decision="deny", reason="brief-without-facts"))
+    deny(
+        "[harness] '%s' 브리프가 실재하는 파일을 하나도 가리키지 않는다.\n"
+        "서브에이전트는 빈 컨텍스트로 시작한다 — 네가 이미 확인한 사실(파일:라인,\n"
+        "재현 명령, 실측값)을 파일로 적고 그 경로를 브리프에 넣어라. 그러지 않으면\n"
+        "저 에이전트는 같은 조사를 처음부터 다시 한다.\n" % sub
+    )
+
+
 def spawn_gate(root, cfg, payload, base):
     """
     EN: Spawning the write-capable role is the moment the approval gate has to
@@ -641,8 +702,12 @@ def spawn_gate(root, cfg, payload, base):
         수락된 ExitPlanMode 뿐이다. 그 외는 오케스트레이터가 자기 권한을 스스로
         인증하는 것이고, 이 게이트는 바로 그걸 막으려고 있다.
     """
-    sub = (payload.get("tool_input") or {}).get("subagent_type", "")
+    tool_input = payload.get("tool_input") or {}
+    sub = tool_input.get("subagent_type", "")
     base = dict(base, subagent_type=sub)
+
+    handoff_gate(root, cfg, base, sub, tool_input.get("prompt", ""))
+
     if sub not in cfg.get("write_agents", []):
         emit_metric(root, cfg, dict(base, decision="allow", reason="spawn"))
         allow()
@@ -686,6 +751,19 @@ def handle_pretooluse(root, cfg, payload):
         "event": "PreToolUse",
         "session": payload.get("session_id"),
         "actor": actor,
+        # EN: `관측` — per-agent id, so tool calls can be attributed to ONE
+        #     subagent instead of summed per (session, role). Without it three
+        #     makers in one session collapse into a single row, and "how many
+        #     calls before the first write" — the number a no-output threshold
+        #     would need — cannot be derived at all. Recorded, not enforced:
+        #     inventing the threshold before the data exists is the same mistake
+        #     as the unjustified two-file limit.
+        # KO: `관측` — 에이전트별 id. 툴 호출을 (세션, 역할) 합산이 아니라 **한**
+        #     서브에이전트에 귀속시킨다. 이게 없으면 한 세션의 Maker 셋이 한 줄로
+        #     뭉쳐서, 무산출 문턱이 필요로 하는 값("첫 쓰기까지 몇 번 호출했나")을
+        #     아예 도출할 수 없다. 기록만 하고 막지 않는다 — 데이터 전에 문턱을
+        #     지어내는 것이 근거 없던 2개 제한과 같은 잘못이다.
+        "agent_id": payload.get("agent_id"),
         "agent_type": payload.get("agent_type"),
         "tool": tool,
     }
