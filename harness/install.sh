@@ -406,6 +406,8 @@ create_harness_json() {
   "approval_gate": true,
   "close_gate": true,
   "max_close_blocks": 2,
+  "handoff_gate": true,
+  "handoff_roles": ["architect", "maker"],
   "metrics": true
 }
 EOF

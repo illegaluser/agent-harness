@@ -415,7 +415,8 @@ case13() {
         rm -rf "$h"; return
     fi
     for k in enforce product exempt main_thread_file_limit verifiers \
-             write_agents approval_gate close_gate max_close_blocks metrics; do
+             write_agents approval_gate close_gate max_close_blocks \
+             handoff_gate handoff_roles metrics; do
         grep -q "\"$k\"" "$p/.claude/harness.json" || missing="$missing $k"
     done
     if [ -n "$missing" ]; then
