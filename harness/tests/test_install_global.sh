@@ -22,7 +22,14 @@ failures=0
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s — %s\n' "$1" "$2"; failures=$((failures + 1)); }
 
-new_home() { mktemp -d; }
+# EN/KO: mktemp 실패를 잡지 않으면 HOME="" 로 설치기가 돌아 루트에 설치될 수 있다 (N-2).
+#        이 파일에는 set -e 가 없으므로 여기서 직접 막는다.
+new_home() {
+    local h
+    h="$(mktemp -d)" || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
+    [ -n "$h" ] && [ -d "$h" ] || { echo "FATAL: mktemp -d gave no dir" >&2; exit 1; }
+    printf '%s' "$h"
+}
 
 # Run the installer with $HOME=$1 and the given args; stdout+stderr go to
 # $1/.install-out, exit code is echoed.
@@ -373,6 +380,52 @@ case11() {
     rm -rf "$h"
 }
 
+# --- Case 12: uninstall must not dead-end on a dangling symlink (N-5) ---
+# EN/KO: 깨진 하네스 링크를 고치는 방법이 제거인데 제거가 막히면 빠져나갈 길이 없다.
+case12() {
+    local label='12 끊긴 CLAUDE.md 심링크에서도 --global --uninstall 이 진행 (N-5)'
+    local h rc
+    h="$(new_home)"
+    mkdir -p "$h/.claude"
+    ln -s "$h/nonexistent/CLAUDE.md" "$h/.claude/CLAUDE.md"
+
+    rc="$(run_install "$h" --global --uninstall)"
+    if [ "$rc" != "0" ]; then
+        fail "$label" "uninstall aborted (exit $rc): $(cat "$h/.install-out")"
+    elif [ -L "$h/.claude/CLAUDE.md" ] || [ -e "$h/.claude/CLAUDE.md" ]; then
+        fail "$label" "the dangling link was left behind"
+    else
+        pass "$label"
+    fi
+    rm -rf "$h"
+}
+
+# --- Case 13: the generated harness.json names every gate key (B1) ---
+# EN/KO: 세 키만 쓰면 approval_gate·close_gate 가 조용히 꺼진 채로 설치된다.
+case13() {
+    local label='13 생성된 harness.json 이 게이트 키를 전부 명시 (B1)'
+    local h p missing=""
+    h="$(new_home)"
+    p="$h/proj"
+    mkdir -p "$p"
+    ( cd "$p" && git init -q . ) 2>/dev/null
+
+    if [ "$(run_install "$h" "$p")" != "0" ]; then
+        fail "$label" "install failed: $(cat "$h/.install-out")"
+        rm -rf "$h"; return
+    fi
+    for k in enforce product exempt main_thread_file_limit verifiers \
+             write_agents approval_gate close_gate max_close_blocks metrics; do
+        grep -q "\"$k\"" "$p/.claude/harness.json" || missing="$missing $k"
+    done
+    if [ -n "$missing" ]; then
+        fail "$label" "missing keys:$missing"
+    else
+        pass "$label"
+    fi
+    rm -rf "$h"
+}
+
 case1
 case2
 case3a
@@ -385,6 +438,8 @@ case8
 case9
 case10
 case11
+case12
+case13
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

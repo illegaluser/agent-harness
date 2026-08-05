@@ -42,11 +42,19 @@ HARNESS_FILES=(
 # KO: 설정 병합 중 만든 임시 파일. 어떤 경로로 끝나든 정리한다 — 설치가 실패해도
 #     대상의 .claude/ 에 .tmp-* 쓰레기를 남기지 않으려는 것이다.
 TMP_FILES=()
+# EN: The trailing `return 0` is load-bearing. An EXIT trap's final status becomes
+#     the script's exit status, and with TMP_FILES empty the loop ends on a failed
+#     `[ -n "" ]` — so every run that created no temp file reported failure while
+#     having succeeded. `--global --uninstall` exited 1 every single time.
+# KO: 끝의 `return 0` 이 핵심이다. EXIT 트랩의 마지막 상태가 스크립트 종료 코드가 되는데,
+#     TMP_FILES 가 비면 루프가 실패한 `[ -n "" ]` 로 끝난다 — 임시 파일을 안 만든 실행은
+#     성공하고도 실패로 보고됐다. `--global --uninstall` 은 매번 exit 1 이었다.
 cleanup_tmp() {
     local f
     for f in "${TMP_FILES[@]:-}"; do
         [ -n "$f" ] && rm -f "$f" "$f.next"
     done
+    return 0
 }
 trap cleanup_tmp EXIT
 
@@ -220,14 +228,28 @@ require_python3() {
 #     ~/.claude/CLAUDE.md 나 ~/.claude/agents 심링크가 실제 백업 파일/디렉터리로
 #     풀리게 해서, 설치 결과가 심링크를 실파일/실디렉터리로 조용히 대체하지 않게 한다.
 #     ~/.claude 디렉터리 자신이 심링크인 경우는 범위 밖이며 여기서 다루지 않는다.
+# EN: $2 = "tolerate-dangling" makes a broken link resolve to the link itself
+#     instead of aborting. Uninstall passes it: aborting there was a dead end,
+#     because the way to fix a broken harness link is to remove the harness, and
+#     removal was the thing being blocked (N-5). Install still aborts — writing
+#     through a broken link would create a file at an unmounted path.
+# KO: $2 가 "tolerate-dangling" 이면 끊긴 링크가 중단이 아니라 링크 자신으로 해석된다.
+#     제거 경로가 이것을 넘긴다 — 거기서 중단하는 것은 막다른 길이었다. 깨진 하네스
+#     링크를 고치는 방법이 하네스를 제거하는 것인데 그 제거가 막혀 있었다(N-5).
+#     설치는 여전히 중단한다 — 끊긴 링크로 쓰면 마운트되지 않은 경로에 파일이 생긴다.
 resolve_if_symlink() {
-    local p="$1"
+    local p="$1" mode="${2:-strict}"
     if [ ! -L "$p" ]; then
         printf '%s\n' "$p"
         return 0
     fi
     if [ -e "$p" ]; then
         python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$p"
+        return 0
+    fi
+    if [ "$mode" = "tolerate-dangling" ]; then
+        log "NOTE: $p is a dangling symlink — removing the link itself."
+        printf '%s\n' "$p"
         return 0
     fi
     log "ERROR: $p is a symlink but its target does not exist (dangling)."
@@ -363,11 +385,28 @@ create_harness_json() {
         return
     fi
     mkdir -p "$target/.claude"
+    # EN: Write every key gate.py reads, even where the value equals the built-in
+    #     default. A three-key file left approval_gate, close_gate, verifiers and
+    #     write_agents to silently fall back — and their falsy defaults mean the
+    #     approval and close gates were OFF while the file said nothing about it.
+    #     Reading this file has to answer "which gates are live?" on its own.
+    # KO: gate.py 가 읽는 키를 전부 쓴다. 값이 내장 기본값과 같아도 쓴다. 세 키만 쓰던
+    #     파일은 approval_gate·close_gate·verifiers·write_agents 를 조용히 기본값에
+    #     맡겼고, 그 기본값이 falsy 라서 승인 게이트와 close 게이트가 꺼진 채였는데
+    #     파일에는 그런 말이 한 줄도 없었다. 이 파일만 읽고 "어떤 게이트가 살아 있나"에
+    #     답할 수 있어야 한다.
     cat >"$dst" <<'EOF'
 {
   "enforce": false,
   "product": ["docs/**", "harness/**"],
-  "exempt": []
+  "exempt": [],
+  "main_thread_file_limit": 2,
+  "verifiers": ["critic"],
+  "write_agents": ["maker"],
+  "approval_gate": true,
+  "close_gate": true,
+  "max_close_blocks": 2,
+  "metrics": true
 }
 EOF
 }
@@ -440,7 +479,10 @@ verify_install() {
 #     정확히 1번, 블록이 소스와 바이트 동일, ~/.claude/agents 의 역할 5개가
 #     harness/agents/*.md 와 바이트 동일.
 verify_install_global() {
-    local target="$HOME/.claude/CLAUDE.md"
+    # EN/KO: 설치·제거와 같은 경로를 봐야 한다 (N-3). 심링크 구성에서 이 함수만 링크
+    #        경로를 쓰면, 검증이 방금 쓴 파일이 아닌 다른 것을 볼 수 있다.
+    local target
+    target="$(resolve_if_symlink "$HOME/.claude/CLAUDE.md")"
     local failed=0
 
     local begin_count end_count
@@ -533,7 +575,10 @@ do_install_global() {
     global_claude="$(resolve_if_symlink "$global_claude")"
     global_agents_dir="$(resolve_if_symlink "$global_agents_dir")"
 
-    mkdir -p "$HOME/.claude"
+    # EN/KO: 해석된 경로의 부모를 만든다 (N-4). $HOME/.claude 를 무조건 만들면, 두 경로가
+    #        모두 dotfiles 로 해석된 구성에서는 아무 일도 하지 않으면서 정작 필요한
+    #        디렉터리는 안 만들어진다.
+    mkdir -p "$(dirname "$global_claude")" "$(dirname "$global_agents_dir")"
 
     # 1. Backup the agents directory, but only if this install would actually
     #    change something under it (N4) — per-file backups in step 2 already
@@ -594,8 +639,17 @@ do_uninstall_global() {
     require_python3
     local global_claude="$HOME/.claude/CLAUDE.md"
     local global_agents_dir="$HOME/.claude/agents"
-    global_claude="$(resolve_if_symlink "$global_claude")"
-    global_agents_dir="$(resolve_if_symlink "$global_agents_dir")"
+    global_claude="$(resolve_if_symlink "$global_claude" tolerate-dangling)"
+    global_agents_dir="$(resolve_if_symlink "$global_agents_dir" tolerate-dangling)"
+
+    # EN/KO: 끊긴 링크는 하네스가 남긴 잔해다. 제거가 그것을 치우는 자리다 (N-5).
+    local dead
+    for dead in "$global_claude" "$global_agents_dir"; do
+        if [ -L "$dead" ] && [ ! -e "$dead" ]; then
+            rm -f "$dead"
+            log "removed dangling symlink $dead"
+        fi
+    done
 
     if [ -f "$global_claude" ]; then
         local begin_count end_count
