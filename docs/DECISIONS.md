@@ -469,3 +469,83 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
 - 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
 - 연결 (Links): `harness/install.sh` · `harness/tests/test_install_global.sh` · `harness/CORE.md` ·
   `.claude/harness-facts.md`
+
+## D-008 · Make the orchestrator hand over what it knows, and add the verification axis that catches dead ends / 오케스트레이터가 아는 것을 넘기게 강제하고, 막다른 길을 잡는 검증 축을 만든다 — 2026-08-05
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: In one session the harness failed in both directions at once. It blocked its own sanctioned
+  route — approval was scoped to a single turn, so the moment the user said anything between
+  approving a plan and spawning the maker, writing (budget spent) and delegating (approval gone)
+  were both impossible and the only escape was switching the gate off. And it failed to block the
+  waste it existed for: three makers burned twelve minutes re-deriving facts a scout had already
+  measured, because those facts lived only in the orchestrator's context and the 40-line report cap
+  had cut them. Neither was a rule violation. `CORE.md` described the main thread in exactly two
+  lines (write budget, bash bypass) and said nothing about briefs, handover, or task size.
+  KO: 한 세션에서 하네스가 두 방향으로 동시에 실패했다. 자기가 지정한 경로를 스스로 막았다 —
+  승인이 한 턴만 유효해서, 계획 승인과 maker 스폰 사이에 사용자가 한 마디만 하면 쓰기도(예산
+  소진) 위임도(승인 소실) 불가능해지고 빠져나갈 길은 게이트를 끄는 것뿐이었다. 동시에 존재
+  이유인 낭비는 못 막았다 — Maker 셋이 Scout 가 이미 측정한 사실을 다시 캐느라 12분을 태웠다.
+  그 사실이 오케스트레이터 컨텍스트에만 있었고 40줄 보고 제한이 그것을 잘라냈기 때문이다.
+  둘 다 규칙 위반이 아니었다. `CORE.md` 는 메인 스레드를 딱 두 줄(쓰기 예산·Bash 우회)로만
+  규정했고 브리프·인수인계·작업 크기에 대해서는 아무 말이 없었다.
+- 결정 (Decision):
+  EN: (1) Handoff gate — `기계`: spawning `architect` or `maker` is denied when the brief names no
+  file that exists. A hook cannot judge a brief's quality, but it can see that nothing was handed
+  over, which is the cheap failure. (2) Per-agent tool-call metric — `관측` only: record `agent_id`
+  so calls attribute to one subagent instead of summing per (session, role). No threshold is set;
+  the data to derive one does not exist yet. (3) An end-to-end test of the sanctioned route.
+  (4) Two meta-tests: a test asserting a prohibition must state why, and every numeric threshold in
+  `DEFAULTS` must be explained in `CORE.md`. (5) Reports keep the 40-line cap but must write the
+  overflow to a file and cite its path.
+  KO: (1) 인수인계 게이트 — `기계`: 브리프가 실재하는 파일을 하나도 안 가리키면 `architect` ·
+  `maker` 스폰을 차단한다. 훅은 브리프의 품질은 못 보지만 아무것도 안 넘긴 것은 볼 수 있고,
+  그것이 가장 싼 실패다. (2) 에이전트별 툴 호출 계측 — `관측` 만: `agent_id` 를 남겨 호출이
+  (세션, 역할) 합산이 아니라 한 서브에이전트에 귀속되게 한다. 문턱은 만들지 않는다 — 도출할
+  데이터가 아직 없다. (3) 규정된 경로의 관통 테스트. (4) 메타 테스트 둘 — 금지를 단언하는
+  테스트는 이유를 적어야 하고, `DEFAULTS` 의 수치 문턱은 전부 `CORE.md` 에 설명돼야 한다.
+  (5) 보고는 40줄 제한을 유지하되 넘치는 상세를 파일로 남기고 경로를 적는다.
+- 기각안 (Rejected):
+  EN: Enforcing the subagent's first tool call to be a Read of the cited file — rejected: the hook
+  would have to remember the cited path per `agent_id`, and that state file becomes another loss
+  point of exactly the kind this entry is fixing. A no-output threshold ("block after N reads with
+  no write") — rejected for now: the only measurement available says a working maker's first write
+  lands on call 3–4, and the failed makers' calls could not be separated from it. Inventing N is
+  the same mistake as the unjustified two-file limit. Deleting the 60 bash regression checks —
+  rejected after inspection: they are not duplicates, each guards a distinct regex path, and they
+  caught the redirect-regex rewrite in this very change.
+  KO: 서브에이전트의 첫 툴 호출을 인용 파일 Read 로 강제하는 안 — 기각: 훅이 `agent_id` 별로
+  인용 경로를 기억해야 하고, 그 상태 파일이 바로 이 항목이 고치는 종류의 유실 지점이 하나 더
+  생긴다. 무산출 문턱("쓰기 없이 N회면 차단") — 지금은 기각: 가진 측정은 "일하는 Maker 의 첫
+  쓰기는 3~4번째 호출"뿐이고 헛돈 Maker 의 호출은 분리되지 않았다. N 을 지어내는 것은 근거
+  없던 2개 제한과 같은 잘못이다. Bash 회귀 60건 삭제 — 확인 후 기각: 중복이 아니라 각각 다른
+  정규식 경로를 지키며, 바로 이 변경의 리다이렉트 정규식 재작성을 잡아냈다.
+- 사유 (Rationale):
+  EN: A rule the hooks cannot see is advice, and advice was not followed — that is the whole reason
+  this harness exists. So the orchestrator's obligations had to be expressed at the only boundary a
+  hook observes: the spawn call. Symmetrically, the reason the dead end survived 152 passing tests
+  is that every one of them asked "is this blocked here?" and none asked "does the sanctioned route
+  reach the end?" A suite with only the first axis cannot distinguish a working gate from a
+  paralysed one. `test_approval_does_not_survive_the_turn` passed for weeks while guarding the
+  defect, which is why a prohibition now has to state its reason.
+  KO: 훅이 볼 수 없는 규칙은 `조언` 이고, `조언` 은 지켜지지 않았다 — 이 하네스가 존재하는
+  이유가 바로 그것이다. 그래서 오케스트레이터의 의무는 훅이 관측하는 유일한 경계, 즉 스폰
+  호출에 걸어야 했다. 대칭으로, 그 막다른 길이 152개 통과 테스트를 뚫고 살아남은 이유는 전부가
+  "여기서 막히는가"만 묻고 "규정된 경로가 끝까지 가는가"는 아무도 안 물었기 때문이다. 첫 번째
+  축만 가진 슈트는 작동하는 게이트와 마비된 게이트를 구분하지 못한다.
+  `test_approval_does_not_survive_the_turn` 이 결함을 지키며 몇 주를 통과했고, 그래서 이제
+  금지에는 이유를 적어야 한다.
+- 정정 (Correction):
+  EN: D-007's commit message claimed the three-key `harness.json` left `approval_gate` and
+  `close_gate` "silently off". That is false, measured: `load_config` seeds `DEFAULTS` first, so a
+  missing key resolves to `True` / `["critic"]` / `["maker"]`. The gates were on. The real defect
+  was transparency — the file could not tell you which gates were live. The code change stands; the
+  stated reason was wrong.
+  KO: D-007 의 커밋 메시지는 키 3개짜리 `harness.json` 이 `approval_gate` 와 `close_gate` 를
+  "조용히 꺼진 채" 두었다고 적었다. 실측 결과 거짓이다 — `load_config` 가 `DEFAULTS` 를 먼저
+  깔아 누락 키는 `True` / `["critic"]` / `["maker"]` 로 채워진다. 게이트는 켜져 있었다. 실제
+  결함은 투명성이었다 — 파일만 봐서는 무엇이 켜져 있는지 알 수 없었다. 코드 변경은 유효하고
+  적어둔 이유가 틀렸다.
+- 결정자 (Decider): 사용자 (User) — 팝업으로 항목별 결정
+- 연결 (Links): `harness/hooks/gate.py` · `harness/tests/test_gate.py` · `harness/CORE.md` ·
+  `harness/agents/*.md` · `harness/install.sh`

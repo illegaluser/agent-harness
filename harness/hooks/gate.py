@@ -150,7 +150,7 @@ LAST_TOKEN_WRITE_MARKERS = (
 #     lookbehind 는 `>`·`&` 만 제외한다(`<` 는 제외 안 함) — `<` 를 제외해도 실제
 #     오탐은 안 막았다(heredoc·`<`·`<<<` 는 REDIRECT_RE 자체가 리터럴 `>` 를 요구해
 #     애초에 안 걸린다) 반면 `exec 3<> file`(읽기-쓰기 오픈)은 실제 미탐이었다.
-REDIRECT_RE = re.compile(r"(?<![>&])(?:[0-9]+|&)?>>?\|?\s*[\"']?([A-Za-z0-9_./~-]+)")
+REDIRECT_RE = re.compile(r"(?<!>)>>?\|?\s*[\"']?([A-Za-z0-9_./~-]+)")
 
 # EN: Command separators. A `|` right after `>` is the noclobber form, not a pipe.
 # KO: 명령 구분자. `>` 바로 뒤의 `|` 는 파이프가 아니라 noclobber 표기다.
@@ -467,6 +467,40 @@ def resolve_target(cwd, token):
     return t if os.path.isabs(t) else os.path.join(cwd, t)
 
 
+def segment_targets(seg):
+    """
+    EN: Every path-shaped token in one shell segment that names a write target.
+        Exemptions win outright — `git rm --cached` stages an index change and
+        `docker rm` names a container, so neither touches the path it mentions.
+    KO: 한 셸 세그먼트 안에서 쓰기 대상을 지목하는 경로 모양 토큰 전부.
+        면제가 먼저 이긴다 — `git rm --cached` 는 인덱스만 올리고 `docker rm` 의
+        인자는 컨테이너 이름이라, 둘 다 언급한 경로를 건드리지 않는다.
+    """
+    if any(re.search(m, seg) for m in WRITE_MARKER_EXEMPTIONS):
+        return []
+    out = []
+    if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
+        out.extend(PATH_TOKEN_RE.findall(seg))
+    if any(re.search(m, seg) for m in LAST_TOKEN_WRITE_MARKERS):
+        path_tokens = [t for t in PATH_TOKEN_RE.findall(seg) if "." in t or "/" in t]
+        if path_tokens:
+            out.append(path_tokens[-1])
+    out.extend(REDIRECT_RE.findall(seg))
+    return out
+
+
+def advance_cwd(root, cwd, seg):
+    """
+    EN/KO: 이 세그먼트를 지난 뒤 셸이 있을 디렉터리. `cd` 가 아니면 그대로 두고,
+           `cd -` 나 인자 없는 `cd` 는 추측하지 않고 루트로 되돌린다.
+    """
+    cd_match = CD_RE.match(seg)
+    if not cd_match:
+        return cwd
+    arg = cd_target(cd_match.group(1))
+    return root if arg is None else resolve_target(cwd, arg)
+
+
 def bash_targets(command, root, cfg):
     """
     EN: Only *targets* count. A redirect names its target; sed -i / perl -i / tee /
@@ -566,22 +600,8 @@ def bash_targets(command, root, cfg):
         # KO: `cd` 세그먼트도 리다이렉트를 달 수 있고, 셸은 cd 가 적용되기 전 *현재*
         #     디렉터리에서 그 리다이렉트를 연다 — 그래서 세그먼트를 먼저 검사하고
         #     그다음에 이후 세그먼트를 위해 cwd 를 옮긴다.
-        cd_match = CD_RE.match(seg)
-        if any(re.search(m, seg) for m in WRITE_MARKER_EXEMPTIONS):
-            if cd_match:
-                arg = cd_target(cd_match.group(1))
-                cwd = root if arg is None else resolve_target(cwd, arg)
-            continue
-        if any(re.search(m, seg) for m in ARG_WRITE_MARKERS):
-            candidates.extend((cwd, t) for t in PATH_TOKEN_RE.findall(seg))
-        if any(re.search(m, seg) for m in LAST_TOKEN_WRITE_MARKERS):
-            path_tokens = [t for t in PATH_TOKEN_RE.findall(seg) if "." in t or "/" in t]
-            if path_tokens:
-                candidates.append((cwd, path_tokens[-1]))
-        candidates.extend((cwd, t) for t in REDIRECT_RE.findall(seg))
-        if cd_match:
-            arg = cd_target(cd_match.group(1))
-            cwd = root if arg is None else resolve_target(cwd, arg)
+        candidates.extend((cwd, t) for t in segment_targets(seg))
+        cwd = advance_cwd(root, cwd, seg)
     hits = []
     for cwd_at, token in candidates:
         path = resolve_target(cwd_at, token)
