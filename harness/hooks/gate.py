@@ -335,6 +335,27 @@ def turn_key(payload):
     return payload.get("prompt_id")
 
 
+def stale_turn(root, payload):
+    """
+    EN: True when this payload carries a turn key that disagrees with the one
+        already on disk — i.e. it belongs to a turn that has moved on. Both keys
+        must be present to conclude anything: a payload with no turn id is not
+        evidence of a different turn, and neither is an absent stored turn.
+    KO: 이 페이로드의 턴 키가 디스크에 이미 있는 것과 어긋날 때 참 — 즉 이미 지나간
+        턴의 것이다. 결론을 내리려면 양쪽 키가 다 있어야 한다. 턴 id 가 없는 페이로드는
+        다른 턴이라는 증거가 아니고, 저장된 턴이 없는 것도 마찬가지다.
+    """
+    turn = turn_key(payload)
+    if turn is None:
+        return False
+    try:
+        with open(counter_file(root, payload), encoding="utf-8") as fh:
+            saved = json.load(fh).get("turn")
+    except (OSError, ValueError):
+        return False
+    return saved is not None and saved != turn
+
+
 def counter_file(root, payload):
     sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
     return os.path.join(state_dir(root), "gate-%s.json" % (sid or "nosession"))
@@ -803,7 +824,19 @@ def handle_subagent_stop(root, cfg, payload):
         쓰기 예산을 새로 받는다.
     """
     agent_type = payload.get("agent_type")
-    if agent_type in cfg.get("verifiers", []):
+    if agent_type in cfg.get("verifiers", []) and not stale_turn(root, payload):
+        # EN: Only stamp the turn this subagent actually belongs to. A verifier
+        #     that finishes after the turn moved on used to write the counter
+        #     with ITS turn key, which replaced the live turn's record wholesale —
+        #     the delegation and write list vanished, so the close gate found
+        #     nothing owed and let an uninspected turn end. Skipping the write
+        #     entirely is right: a subagent from another turn has nothing to say
+        #     about this one, neither "verified" nor "not".
+        # KO: 이 서브에이전트가 실제로 속한 턴만 도장 찍는다. 턴이 넘어간 뒤 끝난
+        #     검증자가 **자기 턴 키로** 카운터를 써서 살아 있는 턴의 기록을 통째로
+        #     갈아치웠다 — 위임 사실과 쓰기 목록이 사라져 close 게이트가 갚을 것이
+        #     없다고 보고 검사 안 된 턴을 끝냈다. 아예 쓰지 않는 것이 옳다. 다른 턴의
+        #     서브에이전트는 이 턴에 대해 "검증됨"도 "아님"도 말할 자격이 없다.
         cpath, state = load_turn(root, payload)
         state["verified"] = True
         write_counter(cpath, state)
@@ -811,6 +844,9 @@ def handle_subagent_stop(root, cfg, payload):
     emit_metric(root, cfg, {
         "event": "SubagentStop",
         "session": payload.get("session_id"),
+        # EN/KO: turn key, so a later reader can tell whether this event carried
+        #        one at all — the whole turn-scoping design depends on it.
+        "turn": turn_key(payload),
         "actor": "sub",
         "agent_type": agent_type,
         "agent_id_raw": agent_id_raw,

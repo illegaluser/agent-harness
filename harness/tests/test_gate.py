@@ -711,8 +711,10 @@ def test_unconfigured_install_is_inert():
         shutil.rmtree(root)
 
 
-def stop(root, event="Stop", agent_type=None, agent_id=None):
+def stop(root, event="Stop", agent_type=None, agent_id=None, prompt_id=None):
     p = {"hook_event_name": event, "session_id": "sess-1", "cwd": root}
+    if prompt_id:
+        p["prompt_id"] = prompt_id
     if agent_id:
         p["agent_id"] = agent_id
     if agent_type:
@@ -889,6 +891,30 @@ def test_approval_does_not_survive_the_turn():
         check("approved maker runs in the same turn", spawn(root, "maker")[0] == 0)
         stop(root)  # turn boundary
         check("next turn requires fresh approval", spawn(root, "maker")[0] == 2)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_late_verifier_from_another_turn_does_not_verify_this_one():
+    """
+    EN: A verifier that finishes late must not certify a turn it never inspected.
+        Measured on Claude Code 2.1.220: SubagentStop DOES carry prompt_id, so the
+        turn key is present and read_counter() rejects the stale state instead of
+        inheriting it. This test locks that in — if a future build stops sending
+        prompt_id on SubagentStop, the no-turn-id path would inherit the stored
+        state and silently mark an uninspected turn verified.
+    KO: 늦게 끝난 검증자가 자기가 본 적 없는 턴을 인증하면 안 된다. Claude Code 2.1.220
+        에서 실측: SubagentStop 에 prompt_id 가 **실린다.** 그래서 턴 키가 있고
+        read_counter() 가 낡은 상태를 물려받지 않고 버린다. 이 테스트가 그것을 고정한다 —
+        나중 빌드가 SubagentStop 에 prompt_id 를 안 실으면, 턴 키 없는 경로가 저장 상태를
+        물려받아 검사한 적 없는 턴을 조용히 verified 로 만든다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/x.md", actor="sub"))  # turn t1 delegates
+        stop(root, event="SubagentStop", agent_type="critic", prompt_id="OTHER-TURN")
+        check("a verifier stamped with another turn does not satisfy this close gate",
+              blocked(stop(root, prompt_id="t1")[1]))
     finally:
         shutil.rmtree(root)
 
