@@ -1207,9 +1207,9 @@ def test_all_tools_are_measured():
                 "cwd": root, "tool_name": tool, "tool_use_id": "tu-1",
                 "agent_id": "a1", "agent_type": "scout", "tool_input": {},
             })
-        rows = [json.loads(l) for l in
+        rows = [json.loads(line) for line in
                 open(os.path.join(root, ".claude", "state", "harness-metrics.jsonl"),
-                     encoding="utf-8") if l.strip()]
+                     encoding="utf-8") if line.strip()]
         tools = [r["tool"] for r in rows if r.get("reason") == "observe"]
         check("read-only tool calls are recorded", tools == ["Read", "Grep", "WebFetch"],
               str(tools))
