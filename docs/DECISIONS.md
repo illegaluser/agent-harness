@@ -779,3 +779,63 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   노브다 — 데이터 없이 문턱을 지어내는 것의 반대다.
 - 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
 - 연결 (Links): `.claude/harness.json` · `harness/hooks/gate.py` · [[D-009]]
+
+## D-014 · Block direct writes to verify-receipt.json, and re-sync both installed projects to canonical / 영수증 파일 직접 쓰기를 차단하고, 설치된 두 프로젝트를 정본으로 다시 맞춘다 — 2026-10-19
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: `.claude/state/` is exempt from `is_product()` so `verify.sh`'s own receipt write does not
+  trip the bash gate (D-009's I3 close-gate path). That exemption cuts both ways: nothing stopped
+  the main thread from Writing `{"all_ok": true}` straight into `verify-receipt.json` and closing
+  the turn without ever running a test — self-certification through the very gap meant to let the
+  real verifier through. Separately, `airgap-test-toolchain` (installed with `enforce: true`) and
+  `MyK` (installed with `enforce: false`) both still carry a pre-D-009 `gate.py`/`critic.md`, which
+  D-013 deliberately left unsynced pending a user decision.
+  KO: `.claude/state/` 는 `is_product()` 에서 면제다 — `verify.sh` 자신의 영수증 쓰기가 bash
+  게이트에 안 걸리게 하려는 것이다(D-009 의 I3 close-게이트 경로). 그 면제는 양날이다 — 메인
+  스레드가 `{"all_ok": true}` 를 `verify-receipt.json` 에 바로 Write 해서 테스트 한 번 없이
+  턴을 닫는 것을 아무것도 막지 않았다 — 진짜 검증자를 통과시키려던 그 틈으로 자기 인증을 한
+  것이다. 별개로, `airgap-test-toolchain`(`enforce: true` 로 설치)과 `MyK`(`enforce: false` 로
+  설치) 둘 다 여전히 D-009 이전의 `gate.py`/`critic.md` 를 갖고 있었고, D-013 은 사용자 결정이
+  나기 전까지 이를 일부러 동기화하지 않고 두었다.
+- 결정 (Decision):
+  EN: (1) `gate.py` now denies any Write/Edit/MultiEdit/NotebookEdit or Bash command that names
+  `.claude/state/verify-receipt.json` as a target, regardless of actor (main or sub) — only
+  running `harness/tools/verify.sh` may produce that file, as a side effect of actually executing
+  the verify commands. The deny reason is `receipt-forgery`; `enforce: false` degrades to
+  observe-only like every other gate. (2) Both `airgap-test-toolchain` and `MyK` are reinstalled
+  from this repo's canonical `gate.py` · `critic.md` · `verify.sh` · `test_gate.py` via
+  `harness/install.sh`, which backs up any pre-existing copy to `.bak`. `airgap-test-toolchain`'s
+  own `verify_commands` are left empty for that project to set. Neither installed project's
+  `.claude/harness.json` is touched, and no commit is made in either — the working tree is left
+  for that project's own review.
+  KO: (1) `gate.py` 는 이제 `.claude/state/verify-receipt.json` 을 대상으로 지목하는 Write/
+  Edit/MultiEdit/NotebookEdit 이나 Bash 명령을, actor(main/sub) 와 무관하게 차단한다 — 그 파일을
+  만들 수 있는 것은 `harness/tools/verify.sh` 실행이 실제로 검증 명령을 돌린 부작용뿐이다. 차단
+  사유는 `receipt-forgery` 이고, `enforce: false` 면 다른 게이트와 같이 관측만 한다. (2)
+  `airgap-test-toolchain` 과 `MyK` 둘 다 `harness/install.sh` 로 이 저장소의 정본
+  `gate.py`·`critic.md`·`verify.sh`·`test_gate.py` 를 재설치한다 — 기존 사본은 `.bak` 로
+  백업한다. `airgap-test-toolchain` 자신의 `verify_commands` 는 그 프로젝트가 정하도록 비워
+  둔다. 두 프로젝트의 `.claude/harness.json` 은 손대지 않고, 어느 쪽에도 커밋하지 않는다 —
+  작업 트리를 그 프로젝트 자신의 검토를 위해 그대로 남긴다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: Leave the receipt write path as-is — rejected: an exemption meant only to let `verify.sh`
+  write its own output doubled as a way to forge `all_ok: true` without running anything, which
+  defeats I3's entire purpose. Re-syncing only one of the two installed projects, or deferring
+  both again as D-013 did — rejected: the user's decision this time is "both, to canonical," not
+  a partial or further-deferred sync.
+  KO: 영수증 쓰기 경로를 그대로 둔다 — 기각: `verify.sh` 자신의 출력을 쓰게 하려던 면제가
+  아무것도 안 돌리고 `all_ok: true` 를 위조하는 수단으로도 쓰여 I3 의 존재 목적을 무력화한다.
+  설치된 두 프로젝트 중 하나만 재동기화하거나, D-013 처럼 둘 다 다시 미룬다 — 기각: 이번
+  사용자 결정은 "둘 다, 정본으로" 이고 부분·재연기가 아니다.
+- 사유 (Rationale):
+  EN: A gate whose own exemption can be used to fabricate the evidence it exists to check is not a
+  gate. Re-syncing both installed projects now that the user has explicitly decided to is the
+  direct application of that decision, not a new judgment call by this repo.
+  KO: 자신의 면제가 그 게이트가 확인하려는 증거를 위조하는 데 쓰일 수 있는 게이트는 게이트가
+  아니다. 사용자가 명시적으로 결정한 지금, 설치된 두 프로젝트를 재동기화하는 것은 그 결정의
+  직접 적용이지 이 저장소가 새로 내리는 판단이 아니다.
+- 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect 생략, 기계적 변경 + 카테고리 해당)을
+  Maker 가 구현
+- 연결 (Links): `harness/hooks/gate.py` · `harness/tests/test_gate.py` · `harness/CORE.md` ·
+  `harness/install.sh` · [[D-009]] · [[D-013]]

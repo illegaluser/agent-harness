@@ -43,6 +43,7 @@ import time
 
 CONFIG_REL = ".claude/harness.json"
 STATE_REL = ".claude/state"
+RECEIPT_REL = STATE_REL + "/verify-receipt.json"
 METRICS_NAME = "harness-metrics.jsonl"
 FACTS_REL = ".claude/harness-facts.md"
 
@@ -333,6 +334,30 @@ def is_product(root, cfg, path):
     return any(matches_any(rel, cfg.get("product", [])) for rel in forms)
 
 
+def is_receipt_path(root, path):
+    """
+    EN: True when `path` — by either the name as written or the inode it
+        resolves to — IS the verify.sh receipt file. Checked independently of
+        is_product(), which always returns False under `.claude/state/` so
+        verify.sh itself can write the receipt without tripping the bash gate.
+        That exemption must not let a Write/Edit/Bash call forge the same file
+        *as if it were ordinary data* — the gap this closes (D-014). Mirrors
+        is_product()'s both-forms check so a symlink cannot dodge it either.
+    KO: `path` 가 — 쓰인 이름이든 실제 도달하는 inode 든 — verify.sh 영수증 파일과
+        '같을' 때 참. is_product() 와 독립적으로 검사한다 — is_product() 는
+        `.claude/state/` 아래를 항상 비산출물로 보는데, 그건 verify.sh 가 bash
+        게이트에 안 걸리고 영수증을 쓰게 하려는 것일 뿐, Write/Edit/Bash 가 같은
+        파일을 '데이터처럼' 위조해도 된다는 뜻이 아니다 — 이게 메우는 틈이다(D-014).
+        is_product() 처럼 양쪽 형태를 다 검사해 심링크로도 피할 수 없게 한다.
+    """
+    if not path:
+        return False
+    for rel in (rel_path(root, path), rel_path_logical(root, path)):
+        if rel == RECEIPT_REL:
+            return True
+    return False
+
+
 def turn_key(payload):
     """
     EN: prompt_id changes once per user prompt and is the exact turn boundary.
@@ -617,7 +642,9 @@ def bash_targets(command, root, cfg):
     hits = []
     for cwd_at, token in candidates:
         path = resolve_target(cwd_at, token)
-        if is_product(root, cfg, path):
+        # EN/KO: 산출물이거나(is_product), 영수증 파일이거나(is_receipt_path — 둘은
+        #        독립 판정이다. receipt_gate() 가 후자만 걸러 전용 메시지로 막는다).
+        if is_product(root, cfg, path) or is_receipt_path(root, path):
             rel = rel_path(root, path)
             if rel not in hits:      # dedup here, so bash_gate's join stays 1:1 with files
                 hits.append(rel)
@@ -653,6 +680,49 @@ def bash_gate(root, cfg, payload, base):
             "Edit/Write 를 쓰거나 maker 서브에이전트에 위임하라.\n" % ", ".join(hits[:5])
         )
     allow()
+
+
+def receipt_gate(root, cfg, payload, base, tool):
+    """
+    EN: Neither actor may write `verify-receipt.json` directly, through Write/
+        Edit/MultiEdit/NotebookEdit or through a Bash command that names it —
+        only `harness/tools/verify.sh` may, by writing it as a side effect of
+        actually running the verify commands. Without this, `.claude/state/`
+        being exempt from is_product() (so verify.sh's own write does not trip
+        the bash gate) doubled as a way to self-certify: Write `{"all_ok":
+        true}` straight into the receipt and the close gate is satisfied with
+        no test ever run (D-014). `tool` decides which detector applies — for
+        Bash we reuse bash_targets() (already extended to flag the receipt
+        path independently of is_product()); for the write tools we check the
+        declared file_path/notebook_path directly. `enforce:false` degrades to
+        observe-only, same as every other gate here.
+    KO: 어느 actor 도 `verify-receipt.json` 을 직접 못 쓴다 — Write/Edit/
+        MultiEdit/NotebookEdit 으로도, 그 경로를 지목하는 Bash 명령으로도.
+        `harness/tools/verify.sh` 만 쓸 수 있다 — 실제로 검증 명령을 돌린
+        부작용으로. 이게 없으면, `.claude/state/` 가 is_product() 면제라서
+        (verify.sh 자신의 쓰기가 bash 게이트에 안 걸리게 하려고) 생긴 구멍이
+        자기 인증 수단이 된다 — 테스트 한 번 없이 `{"all_ok": true}` 를 영수증에
+        바로 써서 close 게이트를 충족시킬 수 있었다(D-014). `tool` 로 판정기를
+        고른다 — Bash 는 bash_targets() 를 그대로 쓰고(is_product() 와 독립으로
+        영수증 경로도 잡게 이미 확장했다), 쓰기 툴은 선언된
+        file_path/notebook_path 를 직접 본다. `enforce:false` 면 다른 게이트와
+        같이 관측만 하고 막지 않는다.
+    """
+    tool_input = payload.get("tool_input") or {}
+    if tool == "Bash":
+        hit = RECEIPT_REL in bash_targets(tool_input.get("command", ""), root, cfg)
+    else:
+        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        hit = is_receipt_path(root, path)
+    if not hit:
+        return
+    emit_metric(root, cfg, dict(base, decision="deny" if cfg["enforce"] else "observe",
+                                reason="receipt-forgery"))
+    if cfg["enforce"]:
+        deny(
+            "[harness] verify-receipt.json 은 `bash harness/tools/verify.sh` 만 쓴다.\n"
+            "직접 쓰지 마라.\n"
+        )
 
 
 def write_gate(root, cfg, payload, base, actor, rel):
@@ -809,10 +879,15 @@ def handle_pretooluse(root, cfg, payload):
     if tool in SPAWN_TOOLS:
         spawn_gate(root, cfg, payload, base)
 
-    if tool == "Bash" and actor == "main":
-        bash_gate(root, cfg, payload, base)
+    if tool == "Bash":
+        # EN/KO: 영수증 위조 차단은 actor 무관(D-014) — bash_gate 는 메인 스레드만.
+        receipt_gate(root, cfg, payload, base, tool)
+        if actor == "main":
+            bash_gate(root, cfg, payload, base)
 
     if tool in WRITE_TOOLS:
+        # EN/KO: 영수증 위조 차단은 actor 무관(D-014) — is_product() 보다 먼저 본다.
+        receipt_gate(root, cfg, payload, base, tool)
         tool_input = payload.get("tool_input") or {}
         path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
         if is_product(root, cfg, path):
@@ -947,34 +1022,71 @@ def read_verdict(jsonl_path):
                     record = json.loads(line)
                 except (ValueError, TypeError):
                     continue
-                if not isinstance(record, dict):
-                    continue
-                message = record.get("message")
-                if not isinstance(message, dict) or message.get("role") != "assistant":
-                    continue
-                content = message.get("content")
-                if not isinstance(content, list):
+                content = _assistant_content(record)
+                if content is None:
                     continue
                 for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    block_type = block.get("type")
-                    if block_type == "text":
-                        text = block.get("text")
-                        if isinstance(text, str) and text.strip():
-                            last_candidate = text
-                    elif block_type == "tool_use" and block.get("name") == "SubagentHandback":
-                        handback_input = block.get("input")
-                        if isinstance(handback_input, dict):
-                            handback_message = handback_input.get("message")
-                            if isinstance(handback_message, str) and handback_message.strip():
-                                last_candidate = handback_message
+                    candidate = _report_candidate(block)
+                    if candidate is not None:
+                        last_candidate = candidate
         if last_candidate is None:
             return None, True
         match = VERDICT_RE.search(last_candidate)
         return (match.group(1), True) if match else (None, True)
     except Exception:
         return None, False
+
+
+def _assistant_content(record):
+    """
+    EN: The `message.content` list of one JSONL record, or None unless the
+        record is an assistant turn carrying a list of content blocks. Split
+        out of read_verdict() to cut its cognitive complexity — pure
+        extraction, same behaviour (a non-dict/non-assistant/non-list record
+        still reads as "skip this line").
+    KO: JSONL 레코드 하나의 `message.content` 리스트, 그 레코드가 콘텐츠 블록
+        리스트를 실은 assistant 턴일 때만 돌려주고 아니면 None. read_verdict()
+        의 인지 복잡도를 줄이려고 분리했다 — 순수 추출이고 동작은 그대로다
+        (dict 가 아니거나 assistant 가 아니거나 리스트가 아니면 여전히
+        "이 줄은 건너뛴다"로 읽힌다).
+    """
+    if not isinstance(record, dict):
+        return None
+    message = record.get("message")
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return None
+    content = message.get("content")
+    return content if isinstance(content, list) else None
+
+
+def _report_candidate(block):
+    """
+    EN: The candidate final-report text carried by one assistant content
+        block, or None if this block carries none. A candidate is either
+        (a) a `text` block, or (b) a `tool_use` block named `SubagentHandback`
+        whose `input.message` is a string — see read_verdict() for why both
+        count. Split out to cut read_verdict()'s cognitive complexity; same
+        behaviour, just one block at a time instead of inline in the loop.
+    KO: assistant 콘텐츠 블록 하나가 나르는 최종 보고 후보 문자열, 없으면
+        None. 후보는 (a) `text` 블록, 또는 (b) `input.message` 가 문자열인
+        `SubagentHandback` 이름의 `tool_use` 블록이다 — 둘 다 후보인 이유는
+        read_verdict() 참고. read_verdict() 의 인지 복잡도를 줄이려고
+        분리했다 — 동작은 그대로고, 루프 안에 inline 돼 있던 것을 블록 하나
+        단위로 뗐을 뿐이다.
+    """
+    if not isinstance(block, dict):
+        return None
+    block_type = block.get("type")
+    if block_type == "text":
+        text = block.get("text")
+        return text if isinstance(text, str) and text.strip() else None
+    if block_type == "tool_use" and block.get("name") == "SubagentHandback":
+        handback_input = block.get("input")
+        if isinstance(handback_input, dict):
+            handback_message = handback_input.get("message")
+            if isinstance(handback_message, str) and handback_message.strip():
+                return handback_message
+    return None
 
 
 def compute_cost(payload):

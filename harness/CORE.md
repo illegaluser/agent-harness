@@ -44,6 +44,11 @@
   충족되지 않는다. `max_close_blocks` 회 이후엔 무조건 통과 — 검증이 막혀도 세션이 안 잠긴다.
   정본과 갈라진 설치처를 위해 `require_verdict: false` 로 두면 검증자가 끝나기만 해도
   충족된다(종전 동작).
+- `기계` `.claude/state/verify-receipt.json` 은 `bash harness/tools/verify.sh` 만 쓸 수 있다.
+  Write/Edit/MultiEdit/NotebookEdit 으로든 그 경로를 지목하는 Bash 명령으로든, actor(main/sub)
+  무관하게 직접 쓰기는 차단된다 — 그러지 않으면 `.claude/state/` 가 `is_product` 면제라는 점을
+  이용해 테스트 없이 `all_ok: true` 를 바로 써 넣는 자기 인증이 통과한다(D-014). `bash_targets`
+  의 알려진 미탐(위 I1)은 이 경로의 탐지에도 똑같이 적용된다.
 - 예산 안에서 메인이 직접 끝낸 턴은 검증 의무가 없다. 거기까지 강제하면 싼 경로가 비싼 경로와
   같아진다. 재량이 아니라 문턱이며, `main_thread_file_limit` 을 그대로 재사용한다.
 

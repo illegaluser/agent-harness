@@ -1529,25 +1529,93 @@ def test_session_start_injects_config_summary():
         shutil.rmtree(root)
 
 
-def test_claude_state_path_is_always_exempt():
+def test_claude_state_other_files_still_exempt():
     """
-    EN: `.claude/state/` must never be product, even if a project's own config
-        covers it — verify.sh writes its receipt there, and gating that write
-        would block the very mechanism meant to satisfy the close gate.
-    KO: `.claude/state/` 는 프로젝트 설정이 그것을 덮어도 절대 산출물이 아니어야
-        한다 — verify.sh 가 영수증을 거기 쓰는데, 그 쓰기를 막으면 close 게이트를
-        충족시키려는 바로 그 장치가 막힌다.
+    EN: `.claude/state/` files OTHER than the receipt must never be product,
+        even if a project's own config covers everything — the harness's own
+        counter/metrics files live there, and gating them would block the
+        harness itself. (The receipt file is a separate, narrower case: see
+        test_receipt_forgery_* below — D-014.)
+    KO: 영수증을 '제외한' `.claude/state/` 파일은 프로젝트 설정이 전부를 덮어도
+        절대 산출물이 아니어야 한다 — 하네스 자신의 카운터·계측 파일이 거기
+        있고, 막으면 하네스 자체가 막힌다. (영수증 파일은 더 좁은 별개의
+        케이스다 — 아래 test_receipt_forgery_* 참고, D-014.)
     """
     root = make_repo(dict(ENFORCING, product=["**"]))
     try:
-        check("direct write under .claude/state/ is not gated even if product covers everything",
-              run(root, write_payload(root, ".claude/state/verify-receipt.json"))[0] == 0)
+        check("direct write under .claude/state/ (non-receipt) is not gated",
+              run(root, write_payload(root, ".claude/state/foo.json"))[0] == 0)
         p = {
             "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
             "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
-            "tool_input": {"command": "echo x > .claude/state/verify-receipt.json"},
+            "tool_input": {"command": "echo x > .claude/state/foo.json"},
         }
-        check("bash write under .claude/state/ is not gated either", run(root, p)[0] == 0)
+        check("bash write under .claude/state/ (non-receipt) is not gated either",
+              run(root, p)[0] == 0)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_forgery_blocked_main_write():
+    """EN/KO: D-014 — 메인 스레드의 Write 로 영수증을 직접 쓰는 자기 인증을 막는다."""
+    root = make_repo(ENFORCING)
+    try:
+        code, _, err = run(root, write_payload(root, ".claude/state/verify-receipt.json"))
+        check("main thread Write to verify-receipt.json is DENIED", code == 2, "exit=%d" % code)
+        check("deny message names verify.sh", "verify.sh" in err, repr(err[:120]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_forgery_blocked_sub_edit():
+    """EN/KO: D-014 — 서브에이전트의 Edit 도 영수증 직접 쓰기는 막는다."""
+    root = make_repo(ENFORCING)
+    try:
+        code, _, _ = run(root, write_payload(root, ".claude/state/verify-receipt.json",
+                                              actor="sub", tool="Edit"))
+        check("subagent Edit to verify-receipt.json is DENIED too", code == 2, "exit=%d" % code)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_forgery_blocked_bash_redirect():
+    """EN/KO: D-014 — Bash 리다이렉트로 영수증에 all_ok:true 를 바로 쓰는 것도 막는다."""
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "tool_input": {"command":
+                            "echo '{\"all_ok\":true}' > .claude/state/verify-receipt.json"},
+        }
+        code, _, _ = run(root, p)
+        check("bash redirect into verify-receipt.json is DENIED", code == 2, "exit=%d" % code)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_verify_sh_execution_not_blocked():
+    """EN/KO: 영수증을 '쓰는' 유일한 정당한 경로 — verify.sh 실행 자체는 통과한다."""
+    root = make_repo(ENFORCING)
+    try:
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "tool_input": {"command": "bash harness/tools/verify.sh"},
+        }
+        code, _, _ = run(root, p)
+        check("running verify.sh itself is allowed", code == 0, "exit=%d" % code)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_forgery_observed_only_when_not_enforcing():
+    """EN/KO: D-014 — enforce:false 는 다른 게이트와 같이 관측만 하고 막지 않는다."""
+    root = make_repo(dict(ENFORCING, enforce=False))
+    try:
+        code, _, _ = run(root, write_payload(root, ".claude/state/verify-receipt.json"))
+        check("non-enforcing config does not block the receipt write",
+              code == 0, "exit=%d" % code)
     finally:
         shutil.rmtree(root)
 
