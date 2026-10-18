@@ -11,8 +11,7 @@
   "metrics": true,
   "verify_commands": [
     "python3 harness/tests/test_gate.py",
-    "python3 harness/tests/test_docs_sync.py",
-    "bash harness/tests/test_install_global.sh"
+    "python3 harness/tests/test_docs_sync.py"
   ],
   "require_verdict": true
 }

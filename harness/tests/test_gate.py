@@ -1298,6 +1298,29 @@ def make_run(root, agent_id, text):
     return os.path.join(base_dir, session_name + ".jsonl")
 
 
+def make_handback_run(root, agent_id, text_stub, handback_message):
+    """
+    EN/KO: 실제 환경의 서브에이전트 종료 형태를 흉내낸다 — 마지막 text 블록은 짧은
+           안내문이고, 진짜 보고는 그 뒤 SubagentHandback 툴 호출의 input.message 에
+           있다(gate.py:read_verdict() 의 두 번째 후보 경로).
+    """
+    base_dir = os.path.join(root, "proj")
+    session_name = "sess-1"
+    subagents_dir = os.path.join(base_dir, session_name, "subagents")
+    os.makedirs(subagents_dir, exist_ok=True)
+    jsonl_path = os.path.join(subagents_dir, "agent-%s.jsonl" % agent_id)
+    with open(jsonl_path, "w", encoding="utf-8") as fh:
+        text_rec = {"message": {"role": "assistant",
+                                 "content": [{"type": "text", "text": text_stub}]}}
+        handback_rec = {"message": {"role": "assistant", "content": [
+            {"type": "tool_use", "name": "SubagentHandback",
+             "input": {"message": handback_message}},
+        ]}}
+        fh.write(json.dumps(text_rec, ensure_ascii=False) + "\n")
+        fh.write(json.dumps(handback_rec, ensure_ascii=False) + "\n")
+    return os.path.join(base_dir, session_name + ".jsonl")
+
+
 def stop_verifier(root, agent_type="critic", agent_id="a1", transcript_path=None):
     p = {"hook_event_name": "SubagentStop", "session_id": "sess-1", "cwd": root,
          "agent_type": agent_type, "agent_id": agent_id}
@@ -1334,6 +1357,70 @@ def test_close_gate_blocks_on_design_only_critic_report():
         tp = make_run(root, "a1", "API e2e 설계를 제시한다. 승인을 기다린다.")
         stop_verifier(root, transcript_path=tp)
         check("a critic report with no VERDICT line does not satisfy close",
+              blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_close_gate_reads_verdict_from_subagent_handback():
+    """
+    EN: This harness's subagents report through the `SubagentHandback` tool
+        call, not the final assistant text block — a real run's last text
+        block was a one-line stub ("Everything is clean. Final report
+        below.") and the VERDICT line was in the SubagentHandback right after
+        it. Before this fix a PASS there still read as "no-verdict" and
+        blocked close forever (bounded only by max_close_blocks).
+    KO: 이 하네스의 서브에이전트는 최종 assistant text 블록이 아니라
+        `SubagentHandback` 툴 호출로 보고한다 — 실제 런의 마지막 text 블록은
+        한 줄짜리 안내("Everything is clean. Final report below.")였고 VERDICT
+        줄은 그 바로 뒤 SubagentHandback 에 있었다. 이 수정 전에는 거기 PASS 가
+        있어도 "no-verdict" 로 읽혀 close 가 (max_close_blocks 로만 유한하게)
+        계속 막혔다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        tp = make_handback_run(root, "a1", "Everything is clean. Final report below.",
+                                "수행 보고 전문...\nVERDICT: PASS\n")
+        stop_verifier(root, transcript_path=tp)
+        check("a PASS delivered via SubagentHandback satisfies the close gate",
+              not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_close_gate_blocks_fail_delivered_via_subagent_handback():
+    """EN/KO: SubagentHandback 로 온 FAIL 도 차단하고, FAIL 전용 메시지를 낸다."""
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        tp = make_handback_run(root, "a1", "Final report below.",
+                                "결함 발견...\nVERDICT: FAIL\n")
+        stop_verifier(root, transcript_path=tp)
+        code, out, _ = stop(root)
+        check("a FAIL delivered via SubagentHandback still blocks close", blocked(out))
+        check("the block message names the FAIL case", "FAIL" in out, repr(out[:160]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_fail_after_pass_in_the_same_turn_reverts_verified():
+    """
+    EN: A second verifier run that returns FAIL must revert an earlier
+        PASS/CONDITIONAL in the same turn — otherwise a later FAIL hides
+        behind an earlier pass and the close gate lets the turn through.
+    KO: 같은 턴에서 두 번째 검증자가 FAIL 을 내면 앞선 PASS/CONDITIONAL 을
+        되돌려야 한다 — 안 그러면 나중 FAIL 이 앞선 통과 뒤에 숨어 close 게이트가
+        턴을 그냥 통과시킨다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        tp1 = make_run(root, "a1", "VERDICT: PASS\n")
+        stop_verifier(root, agent_id="a1", transcript_path=tp1)
+        tp2 = make_run(root, "a2", "VERDICT: FAIL\n")
+        stop_verifier(root, agent_id="a2", transcript_path=tp2)
+        check("a later FAIL in the same turn reverts an earlier PASS",
               blocked(stop(root)[1]))
     finally:
         shutil.rmtree(root)

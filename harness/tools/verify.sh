@@ -35,12 +35,24 @@ fi
 
 mkdir -p "$STATE_DIR"
 
+# EN: Captured BEFORE any command runs, not after — receipt_ok() in gate.py
+#     treats `ts` as "verification covers every write up to this instant". A
+#     post-run timestamp would let a product write that happens *during* a
+#     slow verify_commands run slip in under a receipt that never saw it.
+# KO: 아무 명령도 돌기 전에 잡는다, 끝난 뒤가 아니라 — gate.py 의 receipt_ok() 는
+#     `ts` 를 "이 순간까지의 쓰기를 전부 검증했다"로 취급한다. 끝난 뒤 시각을 쓰면
+#     느린 verify_commands 가 도는 **동안** 생긴 산출물 쓰기가, 그것을 본 적 없는
+#     영수증 아래로 몰래 들어간다.
+ts="$(python3 -c 'import time; print(time.time())')"
+
 all_ok=true
 results=""
 sep=""
 while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
-    ( cd "$ROOT" && bash -c "$cmd" )
+    # EN/KO: `</dev/null` — 명령이 stdin 을 읽으면 here-string 전체(남은 명령 목록)를
+    #        삼켜 이후 명령이 전혀 실행되지 않고도 all_ok=true 가 나온다.
+    ( cd "$ROOT" && bash -c "$cmd" ) </dev/null
     code=$?
     [ "$code" -eq 0 ] || all_ok=false
     esc_cmd="$(printf '%s' "$cmd" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))')"
@@ -48,7 +60,6 @@ while IFS= read -r cmd; do
     sep=","
 done <<<"$commands"
 
-ts="$(python3 -c 'import time; print(time.time())')"
 printf '{"ts": %s, "commands": [%s], "all_ok": %s}\n' "$ts" "$results" "$all_ok" >"$RECEIPT"
 
 if [ "$all_ok" = "true" ]; then

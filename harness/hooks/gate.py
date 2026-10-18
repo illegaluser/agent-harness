@@ -911,20 +911,33 @@ VERDICT_RE = re.compile(r"(?m)^\s*VERDICT:\s*(PASS|CONDITIONAL|FAIL)\s*$")
 def read_verdict(jsonl_path):
     """
     EN: (verdict|None, resolved) for one verifier run file. Collects every
-        assistant text block in order and reads the LAST one — a verdict can
-        only be real if it is the final word, not an earlier draft. `resolved`
-        is True whenever the file was read and parsed at all, even if no
-        VERDICT line was found (a design-stage report legitimately has none).
-        It is False only on an exception (missing file, bad JSON, I/O error) —
-        the same fail-open contract as compute_cost().
-    KO: 검증자 런 파일 하나의 (판정|None, resolved). assistant 텍스트 블록을 순서대로
-        모으고 **마지막 것**만 읽는다 — 판정은 최종 발언이어야 하며 중간 초안이면
-        안 된다. `resolved` 는 파일을 읽고 파싱**하기만 해도** True 다 — VERDICT 줄이
-        없어도(설계 단계 보고는 정당하게 없다) True. 예외(파일 없음·JSON 오류·I/O
-        오류)일 때만 False — compute_cost() 와 같은 fail-open 계약이다.
+        candidate final-report text in order and reads the LAST one — a
+        verdict can only be real if it is the final word, not an earlier
+        draft. A candidate is either (a) an assistant `text` content block, or
+        (b) an assistant `tool_use` block named `SubagentHandback` whose
+        `input.message` is a string — this harness's subagents deliver their
+        actual report through that tool call, not through the text block
+        (confirmed against a real run: the last text block was a one-line
+        stub, "Everything is clean. Final report below.", and the report with
+        the VERDICT line was in the SubagentHandback call right after it).
+        `resolved` is True whenever the file was read and parsed at all, even
+        if no VERDICT line was found (a design-stage report legitimately has
+        none). It is False only on an exception (missing file, bad JSON, I/O
+        error) — the same fail-open contract as compute_cost().
+    KO: 검증자 런 파일 하나의 (판정|None, resolved). 최종 보고가 될 수 있는 후보를
+        순서대로 모으고 **마지막 것**만 읽는다 — 판정은 최종 발언이어야 하며 중간
+        초안이면 안 된다. 후보는 (a) assistant 의 `text` 콘텐츠 블록, 또는
+        (b) `input.message` 가 문자열인 `SubagentHandback` 이름의 assistant
+        `tool_use` 블록이다 — 이 하네스의 서브에이전트는 실제 보고를 text 블록이
+        아니라 그 툴 호출로 넘긴다(실제 런으로 확인: 마지막 text 블록은 "Everything
+        is clean. Final report below." 한 줄짜리 안내였고, VERDICT 줄이 있는 진짜
+        보고는 바로 뒤의 SubagentHandback 호출에 있었다). `resolved` 는 파일을 읽고
+        파싱**하기만 해도** True 다 — VERDICT 줄이 없어도(설계 단계 보고는 정당하게
+        없다) True. 예외(파일 없음·JSON 오류·I/O 오류)일 때만 False — compute_cost()
+        와 같은 fail-open 계약이다.
     """
     try:
-        last_text = None
+        last_candidate = None
         with open(jsonl_path, "r", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
@@ -943,13 +956,22 @@ def read_verdict(jsonl_path):
                 if not isinstance(content, list):
                     continue
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type")
+                    if block_type == "text":
                         text = block.get("text")
                         if isinstance(text, str) and text.strip():
-                            last_text = text
-        if last_text is None:
+                            last_candidate = text
+                    elif block_type == "tool_use" and block.get("name") == "SubagentHandback":
+                        handback_input = block.get("input")
+                        if isinstance(handback_input, dict):
+                            handback_message = handback_input.get("message")
+                            if isinstance(handback_message, str) and handback_message.strip():
+                                last_candidate = handback_message
+        if last_candidate is None:
             return None, True
-        match = VERDICT_RE.search(last_text)
+        match = VERDICT_RE.search(last_candidate)
         return (match.group(1), True) if match else (None, True)
     except Exception:
         return None, False
@@ -1020,6 +1042,10 @@ def handle_subagent_stop(root, cfg, payload):
                 state["verdict"] = verdict
                 reason = "verified-" + verdict.lower()
             elif verdict == "FAIL":
+                # EN/KO: 같은 턴에서 이전 검증자가 이미 PASS/CONDITIONAL 로 켜둔
+                #        verified 를 되돌린다 — 아니면 뒤에 온 FAIL 이 앞선 통과
+                #        뒤에 숨어 close 게이트를 그대로 통과시킨다.
+                state["verified"] = False
                 state["verdict"] = "FAIL"
                 reason = "verdict-fail"
             else:
@@ -1187,7 +1213,7 @@ def sweep_stale_turns(root, keep_hours=24):
         pass
 
 
-def config_summary(root, cfg):
+def config_summary(cfg):
     """
     EN: A <=700B block generated FROM cfg, not hand-written — the historical
         defect (#1/#2) was a hand-written table drifting from DEFAULTS. A
@@ -1233,7 +1259,7 @@ def handle_session_start(root, cfg, payload):
         "decision": "allow",
         "reason": "start",
     })
-    text = config_summary(root, cfg)
+    text = config_summary(cfg)
     facts = os.path.join(root, FACTS_REL)
     try:
         with open(facts, encoding="utf-8") as fh:
