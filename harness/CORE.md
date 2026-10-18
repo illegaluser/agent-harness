@@ -1,8 +1,9 @@
 # 하네스 코어
 
 이 문서가 하네스의 전부다. 여기 없는 것은 하네스가 아니다.
-소스 파일은 `CORE.md` · `hooks/gate.py` · `tests/test_gate.py` · `tests/test_install_global.sh` ·
-`tools/subagent_cost.py` · `agents/` 5개 · `global/CLAUDE.harness.md` · `install.sh` 다.
+소스 파일은 `CORE.md` · `hooks/gate.py` · `tools/verify.sh` · `tests/test_gate.py` ·
+`tests/test_docs_sync.py` · `tests/test_install_global.sh` · `tools/subagent_cost.py` ·
+`agents/` 5개 · `global/CLAUDE.harness.md` · `install.sh` 다.
 
 **설계 원칙 — 집행할 수 없는 규칙은 쓰지 않는다.** 못 쓰겠으면 `조언` 으로 표시하고 코어 밖에 둔다.
 아래 모든 규칙에는 집행 주체가 붙어 있다. 붙일 수 없으면 그 규칙은 여기 있으면 안 된다.
@@ -35,8 +36,14 @@
 
 ### I3. 검증 없이 끝내지 않는다
 
-- `기계` 이번 턴에 **위임이 일어났는데** 검증자(`verifiers`)가 돌지 않으면 종료가 차단된다.
-  `max_close_blocks` 회 이후엔 무조건 통과 — 검증이 막혀도 세션이 안 잠긴다.
+- `기계` 이번 턴에 **위임이 일어났는데** 검증이 충족되지 않으면 종료가 차단된다. 충족
+  조건은 둘 중 하나다 — (1) 검증자(`verifiers`) 보고의 마지막 줄이 `VERDICT: PASS` 또는
+  `VERDICT: CONDITIONAL` 이다 (2) `bash harness/tools/verify.sh` 가 쓴
+  `.claude/state/verify-receipt.json` 이 `all_ok: true` 이고 그 시각이 이번 턴의 마지막
+  산출물 쓰기보다 뒤다. `VERDICT: FAIL` 이거나 판정 줄이 없으면(검증자가 설계만 냈다)
+  충족되지 않는다. `max_close_blocks` 회 이후엔 무조건 통과 — 검증이 막혀도 세션이 안 잠긴다.
+  정본과 갈라진 설치처를 위해 `require_verdict: false` 로 두면 검증자가 끝나기만 해도
+  충족된다(종전 동작).
 - 예산 안에서 메인이 직접 끝낸 턴은 검증 의무가 없다. 거기까지 강제하면 싼 경로가 비싼 경로와
   같아진다. 재량이 아니라 문턱이며, `main_thread_file_limit` 을 그대로 재사용한다.
 
@@ -65,11 +72,11 @@ Bash 차단 두 줄로만 규정했다. 브리프를 어떻게 쓸지, 사실을
 
 | 역할 | 도구 (`기계`) | 하는 일 |
 | --- | --- | --- |
-| `scout` | Read Glob Grep Bash WebFetch WebSearch | 조사해서 사실만 보고. 판단·권고 안 함 |
-| `architect` | scout 와 동일 | 사실 위에 계획 작성. 코드 안 씀 |
-| `maker` | + **Write Edit** | 계획을 구현. **쓰기 권한을 가진 유일한 역할** |
-| `critic` | Read Glob Grep Bash | 결함 탐색과 판정. 고치지 않음 |
-| `referee` | Read Glob Grep | 병렬 결과 종합. 새 답 안 만듦 |
+| `scout` | Read, Glob, Grep, Bash, WebFetch, WebSearch | 코드베이스와 문서를 조사해 사실만 보고한다. |
+| `architect` | Read, Glob, Grep, Bash, WebFetch, WebSearch | 사실 지도를 받아 실행 계획을 작성한다. |
+| `maker` | Read, Write, Edit, Glob, Grep, Bash | 승인된 계획을 코드 변경으로 옮긴다. |
+| `critic` | Read, Glob, Grep, Bash | 변경을 e2e 로 검증하고 PASS/CONDITIONAL/FAIL 판정을 낸다. |
+| `referee` | Read, Glob, Grep | 여러 병렬 에이전트의 결과를 하나로 종합한다. |
 
 `architect` 와 `scout` 는 도구가 같다 — 둘의 차이는 프롬프트지 권한이 아니다. `조언` 으로 취급한다.
 
@@ -117,6 +124,14 @@ bash harness/tests/test_install_global.sh   # 12 케이스
 
 게이트는 **양쪽이 다 통과해야** 완성이다 — 메인 스레드를 막는 것과, 서브에이전트를 막지 **않는** 것.
 한 방향만 보면 "무용한 게이트"와 "마비된 세션"이 둘 다 성공처럼 보인다.
+
+CORE.md 의 역할 표나 `DEFAULTS` 의 키를 바꾸면 [`tests/test_docs_sync.py`](tests/test_docs_sync.py) 도
+돌려라 — 역할 표가 `agents/*.md` frontmatter 와, 설정 키가 README·전역 블록·facts 와 어긋나는 것을
+기계로 잡는다:
+
+```bash
+python3 harness/tests/test_docs_sync.py
+```
 
 ## 7. 검증 축 — 차단만 시험하면 막다른 길을 못 본다
 
