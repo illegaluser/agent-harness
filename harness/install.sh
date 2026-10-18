@@ -392,8 +392,10 @@ create_harness_json() {
     local dst="$target/.claude/harness.json"
     if [ -f "$dst" ]; then
         log "$dst already exists — leaving it untouched."
+        HARNESS_JSON_CREATED=0
         return
     fi
+    HARNESS_JSON_CREATED=1
     mkdir -p "$target/.claude"
     # EN: Write every key gate.py reads, even where the value equals the built-in
     #     default. A three-key file left approval_gate, close_gate, verifiers and
@@ -461,11 +463,15 @@ verify_install() {
 
     local enforce_val
     enforce_val="$(jq -r '.enforce' "$target/.claude/harness.json")"
-    if [ "$enforce_val" = "false" ]; then
-        log "검증 4/5 OK: enforce == false. 실사용 1세션 후 true 로 바꾸라."
+    if [ "${HARNESS_JSON_CREATED:-0}" -eq 1 ]; then
+        if [ "$enforce_val" = "false" ]; then
+            log "검증 4/5 OK: enforce == false. 실사용 1세션 후 true 로 바꾸라."
+        else
+            log "검증 4/5 FAIL: enforce == $enforce_val (expected false)"
+            failed=1
+        fi
     else
-        log "검증 4/5 FAIL: enforce == $enforce_val (expected false)"
-        failed=1
+        log "검증 4/5 OK: 기존 harness.json 유지 (enforce == $enforce_val)"
     fi
 
     # EN: Every file the installer claims to place must actually be there — a
