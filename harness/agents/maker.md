@@ -2,8 +2,8 @@
 name: maker
 description: 승인된 계획을 코드 변경으로 옮긴다. 하네스에서 쓰기 권한을 가진 유일한 역할. 산출물을 바꿔야 하면 항상 여기를 지난다.
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: claude-sonnet-5
-effort: high
+model: sonnet
+effort: medium
 ---
 
 # Maker

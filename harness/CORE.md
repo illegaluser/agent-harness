@@ -153,16 +153,15 @@ Bash 차단 두 줄로만 규정했다. 브리프를 어떻게 쓸지, 사실을
 수정이므로 전 과정을 거친다. 기계적 변경 규칙은 **카테고리에 걸리지 않는 작업**의 파일 개수
 문턱을 없애는 것이지, 카테고리를 무력화하는 것이 아니다.
 
-### 3.5 검증 등급 — Critic 모델 오버라이드 (`조언`)
+### 3.5 검증 등급 — 단일 (`조언`)
 
-Critic 기본은 `harness/agents/critic.md` 의 frontmatter 값(`claude-sonnet-5` / `effort: high`)이다.
-다음 중 하나라도 해당하면 **`model: claude-opus-5` · `effort: xhigh`** 로 올려서 호출한다.
-`critic.md` 와 같은 값이다 — 검증 여부가 아니라 **강도**를 조절하는 것이다:
+critic 은 `harness/agents/critic.md` frontmatter 값 그대로 호출한다. 모델·effort 를 호출
+시점에 올리지 않는다. critic 은 e2e 실행만 하고, 되돌리기 비용이 큰 범주(하네스·build.sh·CI·
+git hook)는 대부분 화면·API 가 없어 verify.sh 로 닫히므로 등급을 나눌 근거가 없다(D-015).
 
-- 인증·인가, 비밀정보 취급, 외부 LLM 호출 경로
-- `build.sh` / CI / 배포 / git hook / launcher 스크립트 / **하네스 자체**
-- 실행 토폴로지 변경, 외부 시스템(DB·MQ·vector store) 연동 흐름
-- 되돌리기 비용이 큰 변경 (마이그레이션, 스키마)
+- **금지 예:** 인증 흐름 변경이라 critic 을 opus/xhigh 로 올려 부른다.
+- **허용 예:** 인증 흐름 변경도 critic 을 frontmatter 값 그대로 부르고, e2e 시나리오에
+  거부 갈래를 포함시킨다.
 
 ### 3.6 파이프라인 절차와 검증 (`조언`)
 

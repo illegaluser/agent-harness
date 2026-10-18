@@ -2,7 +2,7 @@
 name: architect
 description: 사실 지도를 받아 실행 계획을 작성한다. 코드를 쓰지 않고 도면만 그린다. 설계 판단(형식 선택·트레이드오프·스펙 개정)이 실재할 때 Maker 앞에 세운다.
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
-model: claude-opus-5
+model: opus
 effort: high
 ---
 

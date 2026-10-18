@@ -839,3 +839,81 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
   Maker 가 구현
 - 연결 (Links): `harness/hooks/gate.py` · `harness/tests/test_gate.py` · `harness/CORE.md` ·
   `harness/install.sh` · [[D-009]] · [[D-013]]
+
+## D-015 · Re-pick per-role models as aliases and unify critic's verification grade / 역할별 모델을 별칭으로 재선정하고 critic 등급을 하나로 합친다 — 2026-10-19
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: Per-metrics-run median new_tok was scout 133,681 · architect 99,643 · maker 216,821 ·
+  critic 274,438. Prior frontmatter pinned exact model IDs (`claude-sonnet-5`, `claude-opus-5`) and
+  the global block/CORE.md §3.5 told callers to re-raise critic to `claude-opus-5` / `effort:
+  xhigh` for high-stakes categories (auth, deploy, migration, the harness itself) — but that same
+  category list is mostly screen/API-less, so it closes through `verify.sh`, not critic's e2e,
+  giving the override no real target to act on. A session execution record from 2026-10-19 also
+  showed the pin surviving a generation swap: calls kept hitting `claude-sonnet-5`/`claude-opus-5`
+  instead of the newest generation, because the exact ID does not follow a model-family upgrade.
+  `~/.claude/settings.json`'s main model `"opus[1m]"` resolves to Opus 5.5 — confirming an alias
+  slot already exists and resolves to the current generation without a pinned ID.
+  KO: 메트릭 런당 new_tok 중앙값은 scout 133,681 · architect 99,643 · maker 216,821 · critic
+  274,438 이었다. 기존 frontmatter 는 정확한 모델 ID(`claude-sonnet-5`, `claude-opus-5`) 를
+  고정했고, 전역 블록·CORE.md §3.5 는 고위험 범주(인증·배포·마이그레이션·하네스 자체)에서
+  critic 을 `claude-opus-5` / `effort: xhigh` 로 다시 올려 부르라고 했다 — 그런데 그 범주는
+  대부분 화면·API 가 없어 critic 의 e2e 가 아니라 `verify.sh` 로 닫히므로, 오버라이드가 작동할
+  실제 대상이 없었다. 2026-10-19 세션 실행 기록에서도 세대 교체 후에도 ID 고정이 그대로 남아
+  호출이 최신 세대가 아니라 `claude-sonnet-5`/`claude-opus-5` 로 계속 실행되는 것이 확인됐다 —
+  정확한 ID 는 모델군 승급을 따라가지 않기 때문이다. `~/.claude/settings.json` 의 메인 모델
+  `"opus[1m]"` 은 Opus 5.5 로 풀린다 — 별칭 슬롯이 이미 존재하고, ID 고정 없이도 현재 세대로
+  풀린다는 근거다.
+- 결정 (Decision):
+  EN: (1) Per-role models become generation-agnostic aliases: scout `haiku`/`low`, architect
+  `opus`/`high`, maker `sonnet`/`medium`, referee `sonnet`/`medium`. (2) Critic collapses to a
+  single grade — `sonnet`/`high`, frontmatter value only, never raised at call time; CORE.md §3.5
+  and the global block's override bullet are deleted. (3) `test_docs_sync.py` gains two checks:
+  all five agents/*.md `model:` values are in `{haiku, sonnet, opus, inherit}`, and
+  `claude-(opus|sonnet|haiku|fable)-[0-9]` has zero matches across CORE.md, the global block,
+  agents/*.md, and README.md (docs/DECISIONS.md excluded as history).
+  KO: (1) 역할별 모델을 세대 교체에 안 걸리는 별칭으로 바꾼다 — scout `haiku`/`low`, architect
+  `opus`/`high`, maker `sonnet`/`medium`, referee `sonnet`/`medium`. (2) critic 등급을 하나로
+  합친다 — `sonnet`/`high`, frontmatter 값만 쓰고 호출 시점에 올리지 않는다. CORE.md §3.5 와
+  전역 블록의 오버라이드 불릿을 삭제한다. (3) `test_docs_sync.py` 에 검사 둘을 추가한다 — 다섯
+  agents/*.md 의 `model:` 값이 전부 `{haiku, sonnet, opus, inherit}` 안에 있는지, 그리고
+  `claude-(opus|sonnet|haiku|fable)-[0-9]` 가 CORE.md·전역 블록·agents/*.md·README.md 전체에서
+  0건인지(docs/DECISIONS.md 는 이력이라 제외).
+- 대안·기각 (Alternatives · Rejected):
+  EN: Keep exact model IDs and just update them by hand on each generation swap — rejected: that
+  is exactly the failure mode the 2026-10-19 session record showed, a manual step that was
+  skipped. Keep the critic override but narrow its trigger list to only categories that actually
+  have a screen/API — rejected: the categories named (harness, build.sh, CI, git hook) are
+  screen/API-less by definition, so a narrower list would be empty and the override would still
+  have no target. Measure maker's `effort: medium` before adopting it — rejected for this round:
+  the user's approved decision ("제안안") adopted it directly; effort impact stays unmeasured and
+  is noted here rather than blocking the change.
+  KO: 정확한 모델 ID 를 유지하고 세대 교체마다 손으로 바꾸기로 한다 — 기각: 그게 바로
+  2026-10-19 세션 기록이 보여준 실패 양상이다 — 손으로 할 단계가 생략됐다. critic 오버라이드를
+  유지하되 트리거 목록을 실제로 화면·API 가 있는 범주로만 좁힌다 — 기각: 지목된 범주(하네스·
+  build.sh·CI·git hook) 는 정의상 화면·API 가 없어 좁힌 목록이 비게 되고 오버라이드는 여전히
+  대상이 없다. maker 의 `effort: medium` 을 채택 전에 실측한다 — 이번 회차는 기각: 사용자가
+  승인한 결정("제안안")을 그대로 채택했고, effort 영향은 미측정 상태로 여기 기록해 두되 변경을
+  막는 근거로 쓰지 않는다.
+- 사유 (Rationale):
+  EN: Sonnet-5.5 pricing is the $2/$10 per-1M-tokens baseline (relative cost 1); haiku-5.5 is
+  $0.10/$0.50 (over $0.50/$2.50 past a 100K-token prompt) and opus-5.5 is $4/$20, versus the prior
+  opus-5 pin at $5/$25. Because each model's input:output price ratio holds regardless of a given
+  run's input/output token split, the aliasing plus critic unification holds for one full
+  pipeline run (875→698 relative cost, −20%) and for a screen/API-less change that skips critic's
+  e2e entirely (875→424, −52%). Collapsing critic to one grade removes the override's dead branch
+  (no real target) without losing verification strength, since verify.sh already carries the
+  screen/API-less categories.
+  KO: Sonnet 5.5 단가는 1M 토큰당 $2/$10 이고 이를 상대비용 1 로 둔다. haiku 5.5 는
+  $0.10/$0.50(프롬프트가 100K 를 넘으면 $0.50/$2.50), opus 5.5 는 $4/$20 이다 — 이전에 고정했던
+  opus 5 의 $5/$25 보다 낮다. 어느 모델이든 입력:출력 단가 비율이 그 런의 입출력 토큰 비중과
+  무관하게 성립하므로, 별칭 전환과 critic 등급 통합을 합치면 파이프라인 1회 전체 상대비용은
+  875→698(−20%), critic 의 e2e 를 완전히 건너뛰는 화면·API 없는 변경은 875→424(−52%) 가 된다.
+  critic 을 등급 하나로 합치는 것은 검증 강도를 잃는 게 아니라, 작동할 대상이 없던 오버라이드
+  죽은 가지를 걷어내는 것이다 — 화면·API 없는 범주는 이미 verify.sh 가 닫고 있었기 때문이다.
+- 결정자 (Decider): 사용자 (User) — 팝업으로 승인한 결정("제안안"/"하나로 합친다"/"별칭")을
+  Maker 가 구현
+- 연결 (Links): `harness/agents/scout.md` · `harness/agents/architect.md` ·
+  `harness/agents/maker.md` · `harness/agents/critic.md` · `harness/agents/referee.md` ·
+  `harness/CORE.md` · `harness/global/CLAUDE.harness.md` · `harness/tests/test_docs_sync.py` ·
+  [[D-013]] · [[D-014]]

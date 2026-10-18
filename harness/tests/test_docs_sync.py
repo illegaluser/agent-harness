@@ -136,6 +136,47 @@ def test_config_keys_are_not_copied_into_prose():
         check("%s does not copy a DEFAULTS key" % rel, not leaked, str(leaked))
 
 
+ALLOWED_MODEL_ALIASES = {"haiku", "sonnet", "opus", "inherit"}
+
+
+def test_agent_frontmatter_model_is_an_alias():
+    """EN/KO: agents/*.md 의 model: 값이 별칭 집합(haiku/sonnet/opus/inherit)인지 본다 — 정확한 모델
+    ID 를 적으면 세대 교체 후에도 낡은 ID 로 실행되는 결함(D-015)의 재발을 막는다."""
+    for name in AGENT_NAMES:
+        path = os.path.join(HARNESS_DIR, "agents", "%s.md" % name)
+        text = read(path)
+        block = text.split("---", 2)[1] if text.startswith("---") else ""
+        m = re.search(r"^model:\s*(.+)$", block, re.M)
+        value = m.group(1).strip() if m else None
+        check("agents/%s.md model: is an alias" % name,
+              value in ALLOWED_MODEL_ALIASES, "model=%r" % value)
+
+
+EXACT_MODEL_ID_FILES = [
+    CORE,
+    os.path.join(HARNESS_DIR, "global", "CLAUDE.harness.md"),
+    os.path.join(HARNESS_DIR, "agents", "scout.md"),
+    os.path.join(HARNESS_DIR, "agents", "architect.md"),
+    os.path.join(HARNESS_DIR, "agents", "maker.md"),
+    os.path.join(HARNESS_DIR, "agents", "critic.md"),
+    os.path.join(HARNESS_DIR, "agents", "referee.md"),
+    os.path.join(REPO_ROOT, "README.md"),
+]
+
+EXACT_MODEL_ID_PATTERN = re.compile(r"claude-(opus|sonnet|haiku|fable)-[0-9]")
+
+
+def test_no_exact_model_ids_outside_decisions_log():
+    """EN/KO: CORE.md·전역 블록·agents/*.md·README.md 에 정확한 모델 ID
+    (`claude-(opus|sonnet|haiku|fable)-[0-9]`) 가 남아있지 않은지 본다. docs/DECISIONS.md
+    는 이력 기록이라 제외한다."""
+    for path in EXACT_MODEL_ID_FILES:
+        text = read(path)
+        hits = EXACT_MODEL_ID_PATTERN.findall(text)
+        check("%s has no exact model IDs" % os.path.relpath(path, REPO_ROOT),
+              not hits, str(hits))
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:

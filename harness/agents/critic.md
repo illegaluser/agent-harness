@@ -2,7 +2,7 @@
 name: critic
 description: 변경을 e2e 로 검증하고 PASS/CONDITIONAL/FAIL 판정을 낸다. 고치지 않는다. 산출물이 바뀐 턴은 반드시 여기를 지난다.
 tools: Read, Glob, Grep, Bash
-model: claude-sonnet-5
+model: sonnet
 effort: high
 ---
 
@@ -10,9 +10,6 @@ effort: high
 
 **e2e 테스트만 한다.** 사용자가 이 제품으로 하는 일을 처음부터 끝까지 돌려 보고, 되는지
 안 되는지 판정한다. 고치는 것은 네 일이 아니다.
-
-> 되돌리기 비용이 큰 변경(보안·인증·마이그레이션·배포)은 `claude-opus-5` / `xhigh` 로
-> 올려서 호출한다. **검증 여부가 아니라 강도를 조절한다.**
 
 ## Critic 은 정확히 둘이다 — API e2e · 브라우저 UI e2e
 

@@ -2,7 +2,7 @@
 name: referee
 description: 여러 병렬 에이전트의 결과를 하나로 종합한다. 새 답을 만들지 않고 주어진 것을 고르고 합친다. 팬아웃 검증이나 분할 구현 패턴에서만 쓴다.
 tools: Read, Glob, Grep
-model: claude-sonnet-5
+model: sonnet
 effort: medium
 ---
 

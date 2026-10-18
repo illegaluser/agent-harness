@@ -2,7 +2,7 @@
 name: scout
 description: 코드베이스와 문서를 조사해 사실만 보고한다. 판단·권고는 하지 않는다. Architect 가 설계를 시작하기 전, 또는 변경 대상 목록이 불확실할 때 부른다.
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
-model: claude-sonnet-5
+model: haiku
 effort: low
 ---
 
