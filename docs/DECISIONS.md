@@ -549,3 +549,233 @@ no-new-decision / duplicate / pipeline-skipped 중 하나) 마커를 출력해�
 - 결정자 (Decider): 사용자 (User) — 팝업으로 항목별 결정
 - 연결 (Links): `harness/hooks/gate.py` · `harness/tests/test_gate.py` · `harness/CORE.md` ·
   `harness/agents/*.md` · `harness/install.sh`
+
+## D-009 · Read the verifier's verdict string at the close gate, instead of trusting that a verifier merely finished / close 게이트가 검증자의 판정 문자열을 읽게 한다 — 끝나기만 하면 된다는 가정을 버린다 — 2026-10-19
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: The close gate only checked whether a verifier subagent had finished, not what it reported.
+  A critic that presented a design and never ran, or one that returned FAIL, still satisfied the
+  gate — the exact unresolved gap (#3) a critic.md revision (commit `3ea3720`) left behind when it
+  split critic into a design-then-approval-then-execution procedure without teaching the hook to
+  tell the stages apart.
+  KO: close 게이트는 검증자 서브에이전트가 "끝났는지"만 봤고 "뭐라고 했는지"는 보지 않았다.
+  설계만 제시하고 실행은 안 한 critic, 또는 FAIL 을 낸 critic 도 게이트를 풀었다 — critic.md 를
+  설계→승인→수행 3단으로 바꾼 커밋(`3ea3720`)이 훅에 단계를 구분하는 법을 안 가르친 채 남긴
+  미해결 불일치(#3) 그대로였다.
+- 결정 (Decision):
+  EN: `handle_subagent_stop` now calls the existing `resolve_subagent_jsonl()` to find the
+  verifier's run file, and a new `read_verdict()` regex-matches the LAST assistant text block for
+  `VERDICT: PASS|CONDITIONAL|FAIL`. Only PASS/CONDITIONAL set `state["verified"]`; FAIL and "no
+  verdict line" (design-stage) do not, and `handle_stop`'s block message now names which case it
+  is. An unresolvable run file still fails open (`verified-unparsed`) — the critic resolution rate
+  is 3/3 in the 26-run sample, but a hook must not assume every future run resolves. A new
+  `require_verdict: false` keeps the old "finished = verified" behaviour for an install whose
+  `critic.md` has not adopted the VERDICT line.
+  KO: `handle_subagent_stop` 이 기존 `resolve_subagent_jsonl()` 로 검증자 런 파일을 찾고, 신규
+  `read_verdict()` 가 **마지막** assistant 텍스트 블록에서 `VERDICT: PASS|CONDITIONAL|FAIL` 을
+  정규식으로 찾는다. PASS·CONDITIONAL 만 `state["verified"]` 를 켠다 — FAIL 과 "판정 줄 없음"
+  (설계 단계)은 안 켠다. `handle_stop` 의 차단 메시지가 이제 어느 경우인지를 밝힌다. 런 파일을
+  못 찾으면 그래도 fail-open(`verified-unparsed`) 한다 — 26런 샘플에서 critic 해결률은 3/3 이지만,
+  훅이 앞으로 모든 런이 해결된다고 가정할 수는 없다. 신규 `require_verdict: false` 는 `critic.md`
+  가 VERDICT 줄을 아직 안 쓰는 설치처에서 "끝나면 검증됨"이던 종전 동작을 유지한다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: (1) Count critic spawns instead of reading text — rejected: cannot distinguish a
+  design-stage spawn from an execution spawn. (2) Have the orchestrator record the verdict in
+  state itself — rejected: self-certification, the exact failure mode `spawn_gate`'s own comment
+  already rejects for approval.
+  KO: (1) 텍스트를 읽는 대신 critic 스폰 횟수를 세는 안 — 기각: 설계 스폰과 수행 스폰을 구분하지
+  못한다. (2) 오케스트레이터가 직접 판정을 state 에 기록하는 안 — 기각: 자기 인증이다 — `spawn_gate`
+  의 주석이 승인에 대해 이미 같은 이유로 기각한 설계다.
+- 사유 (Rationale):
+  EN: A gate that releases on "a verifier ran" rather than "what it found" is advisory dressed as
+  enforcement. Reading the verdict string closes exactly the gap the harness's own commit history
+  (`3ea3720`) flagged as open.
+  KO: "검증자가 돌았다"로 풀리고 "무엇을 찾았는지"로는 안 풀리는 게이트는 조언을 집행처럼
+  포장한 것이다. 판정 문자열을 읽는 것이 하네스 자신의 커밋 이력(`3ea3720`)이 미해결로 적어둔
+  바로 그 틈을 닫는다.
+- 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
+- 연결 (Links): `harness/hooks/gate.py` · `harness/tests/test_gate.py` · `harness/agents/critic.md` ·
+  `harness/CORE.md` I3
+
+## D-010 · Let changes with no UI or API close the gate with a verify.sh receipt / 화면·API 없는 변경은 verify.sh 영수증으로 close 게이트를 닫는다 — 2026-10-19
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: `critic.md` only runs two kinds of test — API e2e and browser UI e2e — and refuses code
+  review or doc-consistency checks (confirmed 2026-08-10). That left no verifier for the harness's
+  own code, docs, and scripts, which have neither a UI nor an API (unresolved gap #4).
+  KO: `critic.md` 는 API e2e 와 브라우저 UI e2e 둘만 하고 코드리뷰·문서 대조는 반려한다
+  (2026-08-10 확정). 그래서 화면도 API 도 없는 하네스 자신의 코드·문서·스크립트를 검증할
+  주체가 없었다(미해결 불일치 #4).
+- 결정 (Decision):
+  EN: A new setting `verify_commands` (default `[]`) names shell commands a project runs instead
+  of an e2e test. A new `harness/tools/verify.sh` runs them in order and writes
+  `.claude/state/verify-receipt.json` (`{ts, commands:[{cmd,exit}], all_ok}`). The close gate's new
+  `receipt_ok()` accepts the receipt in lieu of a verifier when `all_ok is True` (strict, not
+  truthy) and `receipt.ts >= state.last_write_ts` — a stale receipt from an earlier turn cannot
+  satisfy a later one. `.claude/state/` is hard-exempted from the product-write gate (both the
+  write gate and the bash gate) so the receipt write itself is never blocked.
+  KO: 신규 설정 `verify_commands`(기본 `[]`)가 e2e 대신 돌릴 셸 명령을 선언한다. 신규
+  `harness/tools/verify.sh` 가 순서대로 돌리고 `.claude/state/verify-receipt.json`
+  (`{ts, commands:[{cmd,exit}], all_ok}`)을 쓴다. close 게이트의 신규 `receipt_ok()` 는
+  `all_ok` 가 (truthy 전부가 아니라) 글자 그대로 True 이고 `receipt.ts >= state.last_write_ts`
+  일 때만 영수증을 검증자 대신으로 받는다 — 이전 턴의 낡은 영수증은 이후 턴을 충족시키지
+  못한다. `.claude/state/` 는 산출물 쓰기 게이트(쓰기·bash 양쪽)에서 하드 면제돼, 영수증을 쓰는
+  행위 자체가 막히지 않는다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: (1) A new `auditor` role — rejected: a 6th role adds a standing routing rule and a per-run
+  cost (observed critic median 274K new-tokens/700s) for work a shell test already answers. (2)
+  Have critic do doc/code review after all — rejected: reverses the user's 2026-08-10 decision.
+  (3) Exempt these turns from verification entirely — rejected: the harness's own code would ship
+  unverified.
+  KO: (1) 신규 `auditor` 역할 — 기각: 6번째 역할은 상시 라우팅 규칙과 런당 비용(critic 중앙값
+  274K new-tok/700s 실측)을 셸 테스트가 이미 답하는 일에 더한다. (2) critic 이 결국 문서·코드
+  대조를 하게 하는 안 — 기각: 사용자의 2026-08-10 결정을 뒤집는다. (3) 이런 턴을 검증에서 통째로
+  면제하는 안 — 기각: 하네스 자신의 코드가 무검증으로 나간다.
+- 사유 (Rationale):
+  EN: The real verification of a documentation or hook change is "do the tests pass", and that is
+  a command, not a person. A receipt makes that command's result observable to the same gate that
+  already reads a critic's verdict, without inventing a verifier that cannot run.
+  KO: 문서나 훅 변경의 진짜 검증은 "시험이 통과하는가"이고 그것은 사람이 아니라 명령이다.
+  영수증은 그 명령의 결과를 critic 판정을 이미 읽는 같은 게이트에서 보이게 하면서, 돌 수 없는
+  검증자를 지어내지 않는다.
+- 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
+- 연결 (Links): `harness/tools/verify.sh` · `harness/hooks/gate.py` · `.claude/harness.json` ·
+  [[D-009]]
+
+## D-011 · Make harness/CORE.md the single normative source and shrink the always-injected block below 5KB / harness/CORE.md 를 유일한 정본으로 삼고 상시 주입 블록을 5KB 아래로 줄인다 — 2026-10-19
+
+- 게이트 (Gate): 검증 (Verification)
+- 맥락 (Context):
+  EN: The same rules (gate table, role boundaries, machine/advisory split, verification tiers)
+  were written three times — in `harness/CORE.md`, the always-injected global block, and
+  `README.md` — and two of the four reported inconsistencies (#1 a stale role table, #2 a stale
+  pipeline description) came from exactly this triple copy going out of sync. The global block
+  alone was 14,160 B (7,691 chars), reloaded on every subagent spawn.
+  KO: 같은 규칙(게이트 표·역할 경계·기계/조언 구분·검증 등급)이 `harness/CORE.md`·상시 주입
+  전역 블록·`README.md` 세 곳에 중복 서술돼 있었고, 보고된 불일치 4건 중 2건(#1 낡은 역할 표,
+  #2 낡은 파이프라인 서술)이 바로 이 3중 복사가 어긋난 데서 왔다. 전역 블록 하나만 14,160B
+  (7,691 chars)였고 서브에이전트 스폰마다 다시 실렸다.
+- 결정 (Decision):
+  EN: `harness/CORE.md` becomes the one normative source (`install.sh`'s `install_files()` already
+  copies only it to every installed project, confirmed by inspection). The global block keeps the
+  byte-identical 24-line commit convention and replaces everything else with a 1,600-char-class
+  behavioural core that defers detail to CORE.md; `README.md`'s gate/role tables are replaced with
+  links. `.claude/harness-facts.md` drops its history sections (moved to this log) and keeps only
+  project-specific facts the generated session-start summary cannot cover. `gate.py` gains
+  `config_summary()`, which generates a <=700B session-start block FROM the live config instead of
+  a hand-written one, so the table-drift failure mode cannot recur by construction. A new
+  `harness/tests/test_docs_sync.py` checks the role table against `agents/*.md` frontmatter and
+  checks that no DEFAULTS key is copied into README/the global block/facts (two inline references
+  to `enforce` and `verify_commands` in the global block are the one documented exception —
+  cross-references, not a copied key:value table).
+  KO: `harness/CORE.md` 가 유일한 정본이 된다(`install.sh` 의 `install_files()` 가 이미 그것만
+  모든 설치 프로젝트로 복사한다는 것을 확인했다). 전역 블록은 바이트 동일한 24행 커밋 규약을
+  유지하고 나머지는 전부 1,600자대의 행동 핵심으로 바꿔 상세는 CORE.md 에 넘긴다.
+  `README.md` 의 게이트·역할 표는 링크로 바뀐다. `.claude/harness-facts.md` 는 이력 절을
+  빼고(이 로그로 이관) 생성된 세션 시작 요약이 못 덮는 프로젝트 고유 사실만 남긴다. `gate.py`
+  에 `config_summary()` 가 추가돼 손으로 쓰지 않고 **지금 설정에서 생성한** 700B 이하 블록을
+  세션 시작에 내보낸다 — 표가 어긋나는 실패 양상이 구조적으로 재발할 수 없다. 신규
+  `harness/tests/test_docs_sync.py` 가 역할 표를 `agents/*.md` frontmatter 와 대조하고,
+  README·전역 블록·facts 로 DEFAULTS 키가 복사되지 않았는지 본다(전역 블록의 `enforce` ·
+  `verify_commands` 인라인 참조 2건만 문서화된 예외다 — key:value 표 복사가 아니라 문장 속
+  단일 참조).
+- 대안·기각 (Alternatives · Rejected):
+  EN: Delete the always-injected block entirely and rely only on the installed hook's generated
+  summary — rejected: a project with no harness installed has no hook, and the behavioural core
+  (plan before the 3rd file, read fully before a verdict, diff cross-references) must still hold
+  there.
+  KO: 상시 주입 블록을 통째로 삭제하고 설치된 훅의 생성 요약에만 의존하는 안 — 기각: 하네스가
+  없는 프로젝트는 훅이 없고, 행동 핵심(3개째 전 계획·판정 전 통독·전수 대조)은 거기서도
+  지켜져야 한다.
+- 사유 (Rationale):
+  EN: A rule written three times can go stale in two of the three without anyone noticing which
+  copy is current. A single normative source plus a generated (not hand-written) session block
+  closes that path rather than re-documenting it more carefully.
+  KO: 세 번 쓴 규칙은 세 곳 중 두 곳이 낡아도 어느 사본이 최신인지 아무도 모른 채 지나간다.
+  단일 정본 + (손으로 안 쓴) 생성 세션 블록은 그 경로를 더 정성껏 다시 적는 게 아니라
+  구조적으로 닫는다.
+- 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
+- 연결 (Links): `harness/CORE.md` · `harness/global/CLAUDE.harness.md` · `README.md` ·
+  `.claude/harness-facts.md` · `harness/tests/test_docs_sync.py` · `harness/hooks/gate.py`
+
+## D-012 · Pin the 2-spawn critic procedure's approval to the orchestrator, keeping the user's approval round-trip at one / critic 2스폰 절차의 승인을 오케스트레이터로 못박아 사용자 승인 왕복을 1회로 유지한다 — 2026-10-19
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: `critic.md`'s 3-stage procedure (present an API e2e design, present a UI scenario, run only
+  after approval) names who approves as "부른 쪽" (the caller) but the always-injected block's
+  pipeline list still described a 1-spawn critic, an unresolved gap (#2) left by the critic.md
+  revision in `3ea3720`.
+  KO: `critic.md` 의 3단 절차(API e2e 설계 제시 → UI 시나리오 제시 → 승인 뒤에만 수행)는 승인자를
+  "부른 쪽"이라고 적어두는데, 상시 주입 블록의 파이프라인 목록은 여전히 critic 1스폰짜리를
+  서술했다 — `3ea3720` 의 critic.md 개정이 남긴 미해결 불일치(#2)다.
+- 결정 (Decision):
+  EN: "부른 쪽" is read literally as the orchestrator (main session), not the end user — reading
+  it as the user would grow the approval round-trip from 1 to 2. The pipeline is now: scout →
+  architect → **one user approval** (ExitPlanMode) → maker → verification, where verification is
+  either critic's 2 spawns (design, then the orchestrator approves/adjusts scope, then execution
+  with a VERDICT line) or, for UI/API-less changes, a `verify.sh` receipt (D-010). A 1-spawn
+  shortcut is allowed only when the user-approved plan already contains critic.md's exact e2e
+  table/scenario format, the brief cites that plan's path and section, and the brief says "run
+  as-is if nothing differs, otherwise present and stop."
+  KO: "부른 쪽"은 글자 그대로 오케스트레이터(메인 세션)로 읽는다 — 사용자로 읽으면 승인 왕복이
+  1에서 2로 늘어난다. 파이프라인은 scout → architect → **사용자 승인 1회**(ExitPlanMode) →
+  maker → 검증이 되고, 검증은 critic 2스폰(설계 → 오케스트레이터가 승인/범위조정 →
+  VERDICT 줄을 낸 수행) 또는, 화면·API 가 없는 변경이면 `verify.sh` 영수증(D-010) 중 하나다.
+  1스폰 축약은 사용자 승인 계획에 critic.md 의 e2e 표/시나리오 형식이 **그대로** 있고, 브리프가
+  그 경로·절 번호를 인용하며, "다르면 제시하고 멈춰라"를 적을 때만 허용한다.
+- 대안·기각 (Alternatives · Rejected):
+  EN: Read "부른 쪽" as the end user — rejected: doubles the user round-trip the harness exists to
+  keep cheap, and the source text says "부른 쪽" (caller), not "사용자" (user).
+  KO: "부른 쪽"을 사용자로 읽는 안 — 기각: 하네스가 싸게 지키려는 사용자 왕복을 두 배로
+  늘리고, 원문이 "부른 쪽"이라고 썼지 "사용자"라고 쓰지 않았다.
+- 사유 (Rationale):
+  EN: The pipeline description must match what `critic.md` actually requires, or the next
+  orchestrator follows a stale shortcut and either skips the approval critic.md demands or burns
+  an extra user round-trip it does not.
+  KO: 파이프라인 서술은 `critic.md` 가 실제로 요구하는 것과 맞아야 한다. 안 그러면 다음
+  오케스트레이터가 낡은 축약을 따라 critic.md 가 요구하는 승인을 건너뛰거나, 필요 없는
+  사용자 왕복을 추가로 태운다.
+- 결정자 (Decider): 사용자 (User) — "critic 3단 절차의 '승인'을 누가 하나요?" 에 "오케스트레이터" 로 답함
+- 연결 (Links): `harness/agents/critic.md` · `harness/global/CLAUDE.harness.md` · `harness/CORE.md`
+
+## D-013 · Leave the two other installed projects unsynced, and keep require_verdict as the knob that absorbs the gap / 설치된 다른 두 프로젝트는 이번에 동기화하지 않고, require_verdict 를 그 격차를 흡수하는 노브로 둔다 — 2026-10-19
+
+- 게이트 (Gate): 승인 (Approval)
+- 맥락 (Context):
+  EN: `airgap-test-toolchain` carries a `critic.md` and `test_gate.py` already diverged from this
+  repo's canonical copies (per Scout's survey), so its critic does not write a VERDICT line. `MyK`
+  runs with `enforce: false`, so no hook blocks anything there. Shipping D-009's verdict-reading
+  close gate without addressing either would make `airgap-test-toolchain` block up to
+  `max_close_blocks` times on every delegated turn until someone notices.
+  KO: `airgap-test-toolchain` 은 이미 이 저장소의 정본과 갈라진 `critic.md`·`test_gate.py` 를
+  가지고 있어(Scout 조사 기준) 그곳의 critic 은 VERDICT 줄을 쓰지 않는다. `MyK` 는
+  `enforce: false` 로 돌아 어떤 훅도 아무것도 막지 않는다. 둘 중 하나도 손대지 않은 채 D-009 의
+  판정-읽기 close 게이트를 내보내면, `airgap-test-toolchain` 은 위임된 턴마다 누군가 알아챌 때까지
+  `max_close_blocks` 회씩 헛차단된다.
+- 결정 (Decision):
+  EN: Do not touch either installed project in this change — syncing a drifted `critic.md` is that
+  project's own approval decision, not this repo's to make unilaterally. Instead, `require_verdict`
+  (default `True`) exists specifically so a project whose verifier has not adopted the VERDICT
+  line can set it `false` and keep the pre-D-009 "finished = verified" behaviour until it chooses
+  to sync.
+  KO: 이번 변경에서 두 프로젝트 중 어느 것도 건드리지 않는다 — 갈라진 `critic.md` 를
+  동기화하는 것은 그 프로젝트 자신의 승인 사안이지 이 저장소가 일방적으로 정할 일이 아니다.
+  대신 `require_verdict`(기본 `True`)를 정확히 이 목적으로 둔다 — 검증자가 VERDICT 줄을 아직
+  안 쓰는 프로젝트가 `false` 로 두고 동기화 전까지 D-009 이전의 "끝나면 검증됨" 동작을 유지할
+  수 있게.
+- 대안·기각 (Alternatives · Rejected):
+  EN: Force-sync both projects as part of this change — rejected: out of this repo's authority
+  over those projects' own `.claude/` state, and `MyK`'s unsynced `.bak-*` files are untouched for
+  the same reason.
+  KO: 이번 변경에 두 프로젝트 강제 동기화를 포함하는 안 — 기각: 그 프로젝트들 자신의
+  `.claude/` 상태에 대한 권한 밖이다. `MyK` 의 미동기화 `.bak-*` 파일도 같은 이유로 그대로 둔다.
+- 사유 (Rationale):
+  EN: A knob that absorbs a known, named gap (two specific projects, two specific reasons) is a
+  justified knob — the opposite of inventing a threshold with no data behind it.
+  KO: 알려지고 이름 붙은 격차(구체적 프로젝트 둘, 구체적 이유 둘)를 흡수하는 노브는 근거 있는
+  노브다 — 데이터 없이 문턱을 지어내는 것의 반대다.
+- 결정자 (Decider): 사용자 (User) — 승인된 계획(Architect) 을 Maker 가 구현
+- 연결 (Links): `.claude/harness.json` · `harness/hooks/gate.py` · [[D-009]]
