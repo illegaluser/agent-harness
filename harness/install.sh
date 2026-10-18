@@ -30,6 +30,7 @@ HARNESS_FILES=(
     hooks/gate.py
     tests/test_gate.py
     tools/subagent_cost.py
+    tools/verify.sh
     agents/scout.md
     agents/architect.md
     agents/maker.md
@@ -302,6 +303,15 @@ install_files() {
     #     빠지면 설치된 모든 프로젝트가 cost_resolved: false 만 기록하게 된다.
     copy_with_backup "$HARNESS_SRC/tools/subagent_cost.py" \
         "$target/harness/tools/subagent_cost.py" "$epoch"
+    # EN: verify.sh is how a project with no UI/API satisfies the close gate
+    #     (receipt_ok() in gate.py) — without it those projects have no way to
+    #     close a delegated turn except require_verdict:false.
+    # KO: verify.sh 는 화면·API 가 없는 프로젝트가 close 게이트(gate.py 의
+    #     receipt_ok())를 충족하는 경로다 — 없으면 그런 프로젝트는
+    #     require_verdict:false 말고는 위임된 턴을 닫을 길이 없다.
+    copy_with_backup "$HARNESS_SRC/tools/verify.sh" \
+        "$target/harness/tools/verify.sh" "$epoch"
+    chmod 0755 "$target/harness/tools/verify.sh"
 
     local drift_off=0
     for name in "${AGENT_NAMES[@]}"; do
@@ -408,7 +418,9 @@ create_harness_json() {
   "max_close_blocks": 2,
   "handoff_gate": true,
   "handoff_roles": ["architect", "maker"],
-  "metrics": true
+  "metrics": true,
+  "verify_commands": [],
+  "require_verdict": true
 }
 EOF
 }

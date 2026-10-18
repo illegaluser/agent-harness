@@ -63,6 +63,8 @@ DEFAULTS = {
     "handoff_gate": True,
     "handoff_roles": ["architect", "maker"],
     "metrics": True,
+    "verify_commands": [],
+    "require_verdict": True,
 }
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
@@ -316,6 +318,16 @@ def is_product(root, cfg, path):
             forms.append(rel)
     if not forms:
         return False  # outside the repo by both names — not our product
+    # EN: `.claude/state/` is the harness's own runtime state dir, including the
+    #     verify.sh receipt. Treating it as product would make the receipt write
+    #     itself trip the bash gate — the exact thing the receipt exists to
+    #     satisfy. Checked before `exempt` so no project config can un-exempt it.
+    # KO: `.claude/state/` 는 하네스 자신의 런타임 상태 디렉터리다(verify.sh 영수증
+    #     포함). 산출물로 치면 영수증 쓰기 자체가 bash 게이트에 걸린다 — 영수증이
+    #     충족하려는 바로 그것을 막는 꼴이다. `exempt` 보다 먼저 검사해 어떤
+    #     프로젝트 설정도 이 면제를 무효화할 수 없게 한다.
+    if any(matches_any(rel, [STATE_REL + "/**"]) for rel in forms):
+        return False
     if any(matches_any(rel, cfg.get("exempt", [])) for rel in forms):
         return False
     return any(matches_any(rel, cfg.get("product", [])) for rel in forms)
@@ -622,6 +634,9 @@ def load_turn(root, payload):
     state.setdefault("verified", False)
     state.setdefault("approved", False)
     state.setdefault("close_blocks", 0)
+    state.setdefault("last_write_ts", 0)
+    state.setdefault("verdict", None)
+    state.setdefault("verifier_ran", False)
     return cpath, state
 
 
@@ -653,6 +668,9 @@ def write_gate(root, cfg, payload, base, actor, rel):
     cpath, state = load_turn(root, payload)
     if rel not in state["wrote"]:
         state["wrote"].append(rel)
+    # EN/KO: 양쪽 actor 모두 — receipt_ok() 가 "이 영수증이 마지막 쓰기보다 뒤인가"를
+    #        물을 때 쓴다.
+    state["last_write_ts"] = time.time()
 
     if actor == "sub":
         state["delegated"] = True
@@ -887,6 +905,56 @@ def resolve_subagent_jsonl(payload):
     return None
 
 
+VERDICT_RE = re.compile(r"(?m)^\s*VERDICT:\s*(PASS|CONDITIONAL|FAIL)\s*$")
+
+
+def read_verdict(jsonl_path):
+    """
+    EN: (verdict|None, resolved) for one verifier run file. Collects every
+        assistant text block in order and reads the LAST one — a verdict can
+        only be real if it is the final word, not an earlier draft. `resolved`
+        is True whenever the file was read and parsed at all, even if no
+        VERDICT line was found (a design-stage report legitimately has none).
+        It is False only on an exception (missing file, bad JSON, I/O error) —
+        the same fail-open contract as compute_cost().
+    KO: 검증자 런 파일 하나의 (판정|None, resolved). assistant 텍스트 블록을 순서대로
+        모으고 **마지막 것**만 읽는다 — 판정은 최종 발언이어야 하며 중간 초안이면
+        안 된다. `resolved` 는 파일을 읽고 파싱**하기만 해도** True 다 — VERDICT 줄이
+        없어도(설계 단계 보고는 정당하게 없다) True. 예외(파일 없음·JSON 오류·I/O
+        오류)일 때만 False — compute_cost() 와 같은 fail-open 계약이다.
+    """
+    try:
+        last_text = None
+        with open(jsonl_path, "r", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                message = record.get("message")
+                if not isinstance(message, dict) or message.get("role") != "assistant":
+                    continue
+                content = message.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text")
+                        if isinstance(text, str) and text.strip():
+                            last_text = text
+        if last_text is None:
+            return None, True
+        match = VERDICT_RE.search(last_text)
+        return (match.group(1), True) if match else (None, True)
+    except Exception:
+        return None, False
+
+
 def compute_cost(payload):
     """
     EN: Best-effort cost lookup for a SubagentStop event. Every failure mode —
@@ -922,6 +990,7 @@ def handle_subagent_stop(root, cfg, payload):
         쓰기 예산을 새로 받는다.
     """
     agent_type = payload.get("agent_type")
+    reason = "subagent-stop"
     if agent_type in cfg.get("verifiers", []) and not stale_turn(root, payload):
         # EN: Only stamp the turn this subagent actually belongs to. A verifier
         #     that finishes after the turn moved on used to write the counter
@@ -936,7 +1005,25 @@ def handle_subagent_stop(root, cfg, payload):
         #     없다고 보고 검사 안 된 턴을 끝냈다. 아예 쓰지 않는 것이 옳다. 다른 턴의
         #     서브에이전트는 이 턴에 대해 "검증됨"도 "아님"도 말할 자격이 없다.
         cpath, state = load_turn(root, payload)
-        state["verified"] = True
+        state["verifier_ran"] = True
+        if not cfg.get("require_verdict", True):
+            state["verified"] = True
+            reason = "verified"
+        else:
+            jsonl_path = resolve_subagent_jsonl(payload)
+            verdict, resolved = read_verdict(jsonl_path) if jsonl_path else (None, False)
+            if not resolved:
+                state["verified"] = True
+                reason = "verified-unparsed"
+            elif verdict in ("PASS", "CONDITIONAL"):
+                state["verified"] = True
+                state["verdict"] = verdict
+                reason = "verified-" + verdict.lower()
+            elif verdict == "FAIL":
+                state["verdict"] = "FAIL"
+                reason = "verdict-fail"
+            else:
+                reason = "no-verdict"
         write_counter(cpath, state)
     cost, cost_resolved, agent_id_raw = compute_cost(payload)
     emit_metric(root, cfg, {
@@ -949,11 +1036,42 @@ def handle_subagent_stop(root, cfg, payload):
         "agent_type": agent_type,
         "agent_id_raw": agent_id_raw,
         "decision": "allow",
-        "reason": "verified" if agent_type in cfg.get("verifiers", []) else "subagent-stop",
+        "reason": reason,
         "cost": cost,
         "cost_resolved": cost_resolved,
     })
     allow()
+
+
+def receipt_ok(root, state):
+    """
+    EN: True when `harness/tools/verify.sh`'s receipt stands in for a verifier —
+        `all_ok` must be literally True (not merely truthy) and the receipt's
+        timestamp must be at or after this turn's last product write, so a
+        stale receipt from a previous turn cannot satisfy a new one. Missing
+        file or malformed JSON is False, not an exception — this is the one
+        gate that must stay strict rather than fail open, since it is the
+        *replacement* for verification, not a fallback when verification
+        could not be read.
+    KO: `harness/tools/verify.sh` 의 영수증이 검증자를 대신할 때 참 — `all_ok` 은
+        글자 그대로 True 여야 하고(truthy 전부가 아니라), 영수증 시각이 이번 턴의
+        마지막 산출물 쓰기보다 같거나 뒤여야 한다 — 낡은 영수증이 새 턴을 충족시킬
+        수 없게. 파일 없음·JSON 깨짐은 False 다, 예외가 아니라 — 이 게이트는
+        fail-open 이 아니라 엄격해야 한다. 검증을 **대신하는** 것이지 검증을 못 읽어서
+        쓰는 완화책이 아니기 때문이다.
+    """
+    path = os.path.join(state_dir(root), "verify-receipt.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            receipt = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    if receipt.get("all_ok") is not True:
+        return False
+    try:
+        return float(receipt.get("ts", 0)) >= float(state.get("last_write_ts", 0))
+    except (TypeError, ValueError):
+        return False
 
 
 def handle_stop(root, cfg, payload):
@@ -992,11 +1110,24 @@ def handle_stop(root, cfg, payload):
     owes_verification = state["delegated"] or len(state["wrote"]) > limit
     base["delegated"] = state["delegated"]
 
+    # EN: Satisfied two ways now — a verifier's PASS/CONDITIONAL verdict, OR a
+    #     fresh verify.sh receipt for changes with no UI/API to run an e2e
+    #     test against. FAIL and "design-only, no verdict yet" are NOT in
+    #     state["verified"] (handle_subagent_stop never sets it for them), so
+    #     neither releases the gate here — only receipt_ok() could, and it
+    #     answers its own question independent of what a verifier said.
+    # KO: 충족 경로가 둘이 됐다 — 검증자의 PASS/CONDITIONAL 판정, 또는 화면·API 가
+    #     없는 변경을 위한 신선한 verify.sh 영수증. FAIL 과 "설계만, 판정 전"은
+    #     state["verified"] 에 없다(handle_subagent_stop 이 그 둘에는 설정하지
+    #     않는다) — 그래서 여기서 게이트를 풀지 못한다. receipt_ok() 만이 풀 수
+    #     있고, 그것은 검증자가 뭐라 했는지와 무관하게 스스로 답한다.
+    satisfied = state["verified"] or receipt_ok(root, state)
+
     blocking = (
         cfg.get("close_gate")
         and cfg.get("enforce")
         and owes_verification
-        and not state["verified"]
+        and not satisfied
         and state["close_blocks"] < int(cfg.get("max_close_blocks", 2))
     )
     if blocking:
@@ -1004,14 +1135,23 @@ def handle_stop(root, cfg, payload):
         write_counter(cpath, state)
         emit_metric(root, cfg, dict(base, decision="block", reason="unverified",
                                     blocks=state["close_blocks"]))
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
+        verdict = state.get("verdict")
+        if verdict == "FAIL":
+            reason_msg = (
+                "[harness] critic 이 FAIL 을 냈다. 고치고 다시 검증하거나 사용자에게 올려라.\n"
+            )
+        elif verdict is None and state.get("verifier_ran"):
+            reason_msg = (
+                "[harness] critic 이 설계만 냈다(판정 없음). 승인하고 수행 스폰을 돌려라.\n"
+            )
+        else:
+            reason_msg = (
                 "[harness] 이번 턴에 산출물이 바뀌었는데 검증자가 돌지 않았다: %s\n"
-                "critic 서브에이전트로 판정을 받고 끝내라."
+                "critic 서브에이전트로 판정을 받거나, 화면·API 가 없는 변경이면\n"
+                "`bash harness/tools/verify.sh` 를 돌리고 끝내라.\n"
                 % ", ".join(state["wrote"][:5])
-            ),
-        }, ensure_ascii=False))
+            )
+        print(json.dumps({"decision": "block", "reason": reason_msg}, ensure_ascii=False))
         allow()
 
     try:
@@ -1047,8 +1187,44 @@ def sweep_stale_turns(root, keep_hours=24):
         pass
 
 
+def config_summary(root, cfg):
+    """
+    EN: A <=700B block generated FROM cfg, not hand-written — the historical
+        defect (#1/#2) was a hand-written table drifting from DEFAULTS. A
+        generated block cannot drift: it says what this install's config
+        actually is, every session, with no second copy to go stale.
+    KO: cfg 로부터 **생성되는** 700B 이하 블록 — 손으로 안 쓴다. 과거 결함(#1/#2)은
+        손으로 쓴 표가 DEFAULTS 와 어긋난 것이었다. 생성본은 어긋날 수 없다 —
+        매 세션 이 설치의 실제 설정을 말하고, 낡을 두 번째 사본이 없다.
+    """
+    verify_cmds = cfg.get("verify_commands", [])
+    lines = [
+        "[harness] enforce=%s · product=%s · main_thread_file_limit=%s"
+        % (cfg.get("enforce"), cfg.get("product", []), cfg.get("main_thread_file_limit")),
+        "verifiers=%s · verify_commands=%d개 · max_close_blocks=%s"
+        % (cfg.get("verifiers", []), len(verify_cmds), cfg.get("max_close_blocks")),
+        "막는 것: (1) 메인 스레드가 한 턴에 산출물 %s개 초과 수정 (2) 메인 스레드가 Bash 로"
+        % cfg.get("main_thread_file_limit"),
+        "산출물 수정 (3) 승인(ExitPlanMode) 없이 %s 스폰 (4) 브리프가 파일을 하나도"
+        % cfg.get("write_agents", []),
+        "안 가리킨 채 %s 스폰 (5) 위임된 턴을 검증 없이 종료 — 검증 = critic 의"
+        % cfg.get("handoff_roles", []),
+        "VERDICT PASS/CONDITIONAL 또는 `bash harness/tools/verify.sh` 영수증.",
+        "규범 정본: harness/CORE.md",
+    ]
+    return "\n".join(lines)
+
+
 def handle_session_start(root, cfg, payload):
-    """EN/KO: Inject repo facts if the project wrote any. Silent no-op otherwise."""
+    """
+    EN: Always inject the generated config summary, even when the project has
+        no facts file — a fresh session must learn what is actually enforced
+        without a human re-explaining it, and that no longer depends on the
+        project having written anything by hand.
+    KO: 프로젝트에 facts 파일이 없어도 생성된 설정 요약은 항상 주입한다 — 새 세션은
+        실제로 집행되는 것을 사람의 재설명 없이 알아야 하고, 이제 그것이 프로젝트가
+        손으로 뭔가를 써뒀는지에 더는 의존하지 않는다.
+    """
     sweep_stale_turns(root)
     emit_metric(root, cfg, {
         "event": payload.get("hook_event_name", "SessionStart"),
@@ -1057,14 +1233,13 @@ def handle_session_start(root, cfg, payload):
         "decision": "allow",
         "reason": "start",
     })
+    text = config_summary(root, cfg)
     facts = os.path.join(root, FACTS_REL)
-    if not os.path.isfile(facts):
-        allow()
     try:
         with open(facts, encoding="utf-8") as fh:
-            text = fh.read()
+            text = text + "\n\n" + fh.read()
     except OSError:
-        allow()
+        pass
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": payload.get("hook_event_name", "SessionStart"),

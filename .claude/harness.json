@@ -8,5 +8,11 @@
   "close_gate": true,
   "approval_gate": true,
   "max_close_blocks": 2,
-  "metrics": true
+  "metrics": true,
+  "verify_commands": [
+    "python3 harness/tests/test_gate.py",
+    "python3 harness/tests/test_docs_sync.py",
+    "bash harness/tests/test_install_global.sh"
+  ],
+  "require_verdict": true
 }

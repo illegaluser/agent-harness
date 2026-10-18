@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "gate.py")
 GATE = os.path.normpath(GATE)
@@ -1225,30 +1226,35 @@ def session_start(root, event="SessionStart"):
 
 def test_session_start_injects_facts():
     """
-    EN: The facts file is how a fresh session inherits the harness state without
-        a human re-explaining it. If injection silently stops working, every
-        later session starts blind — and nothing else would reveal that.
-    KO: 새 세션이 사람의 재설명 없이 하네스 상태를 물려받는 경로가 이 파일이다.
-        주입이 조용히 멎으면 이후 모든 세션이 눈먼 채로 시작하는데, 그걸 드러내는
-        다른 장치가 없다.
+    EN: The injected context is how a fresh session inherits the harness state
+        without a human re-explaining it. A generated config summary now goes
+        out even with no facts file (D3) — if injection silently stops working,
+        every later session starts blind, and nothing else would reveal that.
+    KO: 주입되는 컨텍스트는 사람의 재설명 없이 하네스 상태를 물려받는 경로다.
+        생성된 설정 요약은 이제 facts 파일이 없어도 나간다(D3) — 주입이 조용히
+        멎으면 이후 모든 세션이 눈먼 채로 시작하는데, 그걸 드러내는 다른 장치가 없다.
     """
     root = make_repo(ENFORCING)
     try:
         code, out, _ = session_start(root)
-        check("no facts file → silent no-op", code == 0 and out.strip() == "", repr(out[:60]))
+        payload = json.loads(out)["hookSpecificOutput"]
+        check("generated config summary is injected even with no facts file",
+              "[harness]" in payload["additionalContext"]
+              and "harness/CORE.md" in payload["additionalContext"],
+              repr(out[:160]))
 
         with open(os.path.join(root, ".claude", "harness-facts.md"), "w",
                   encoding="utf-8") as fh:
             fh.write("ENFORCE_IS_ON")
         code, out, _ = session_start(root)
         payload = json.loads(out)["hookSpecificOutput"]
-        check("facts file is injected as additionalContext",
-              payload["additionalContext"] == "ENFORCE_IS_ON", repr(out[:80]))
+        check("facts file content is appended after the generated summary",
+              payload["additionalContext"].endswith("ENFORCE_IS_ON"), repr(out[:200]))
         check("injection echoes the firing event name",
               payload["hookEventName"] == "SessionStart", str(payload))
 
         code, out, _ = session_start(root, event="SubagentStart")
-        check("subagents receive the same facts",
+        check("subagents receive the same injection",
               json.loads(out)["hookSpecificOutput"]["hookEventName"] == "SubagentStart")
     finally:
         shutil.rmtree(root)
@@ -1271,6 +1277,190 @@ def test_session_start_sweeps_dead_turn_state():
         check("stale turn state is swept at session start", not os.path.exists(dead))
         check("live turn state is left alone",
               len([f for f in os.listdir(sdir) if f.startswith("gate-")]) == 1)
+    finally:
+        shutil.rmtree(root)
+
+
+def make_run(root, agent_id, text):
+    """
+    EN/KO: resolve_subagent_jsonl() 이 찾을 수 있는 자리에 런 파일 하나를 만들고
+           transcript_path 를 돌려준다. `text` 는 assistant 의 마지막(유일한)
+           텍스트 블록이 된다.
+    """
+    base_dir = os.path.join(root, "proj")
+    session_name = "sess-1"
+    subagents_dir = os.path.join(base_dir, session_name, "subagents")
+    os.makedirs(subagents_dir, exist_ok=True)
+    jsonl_path = os.path.join(subagents_dir, "agent-%s.jsonl" % agent_id)
+    with open(jsonl_path, "w", encoding="utf-8") as fh:
+        rec = {"message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return os.path.join(base_dir, session_name + ".jsonl")
+
+
+def stop_verifier(root, agent_type="critic", agent_id="a1", transcript_path=None):
+    p = {"hook_event_name": "SubagentStop", "session_id": "sess-1", "cwd": root,
+         "agent_type": agent_type, "agent_id": agent_id}
+    if transcript_path:
+        p["transcript_path"] = transcript_path
+    return run(root, p)
+
+
+def test_close_gate_reads_critic_verdict():
+    """
+    EN: The close gate must read the VERDICT line itself, not just "a critic
+        ran" — a FAIL must NOT release it, exactly like an unverified turn.
+    KO: close 게이트는 "critic 이 돌았다"가 아니라 VERDICT 줄 자체를 읽어야 한다 —
+        FAIL 은 미검증 턴과 똑같이 게이트를 풀면 안 된다.
+    """
+    for verdict, should_block in (("PASS", False), ("CONDITIONAL", False), ("FAIL", True)):
+        root = make_repo(ENFORCING)
+        try:
+            run(root, write_payload(root, "base/v.md", actor="sub"))
+            tp = make_run(root, "a1", "실측 내용...\nVERDICT: %s\n" % verdict)
+            stop_verifier(root, transcript_path=tp)
+            check("critic VERDICT %s -> close %s" % (
+                verdict, "still blocks" if should_block else "releases"),
+                blocked(stop(root)[1]) == should_block)
+        finally:
+            shutil.rmtree(root)
+
+
+def test_close_gate_blocks_on_design_only_critic_report():
+    """EN/KO: 판정 줄이 없는 보고(설계 단계)는 close 게이트를 풀지 못한다."""
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        tp = make_run(root, "a1", "API e2e 설계를 제시한다. 승인을 기다린다.")
+        stop_verifier(root, transcript_path=tp)
+        check("a critic report with no VERDICT line does not satisfy close",
+              blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_unresolvable_run_file_fails_open():
+    """
+    EN: No transcript_path (or a run file that cannot be found) must fail open —
+        the measured resolution rate is 77% overall and 3/3 for critic, but the
+        gate cannot assume every run resolves.
+    KO: transcript_path 가 없거나(또는 런 파일을 못 찾으면) fail-open 해야 한다 —
+        실측 해결률은 전체 77%, critic 은 3/3이지만 게이트가 모든 런이 해결된다고
+        가정할 수는 없다.
+    """
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        stop_verifier(root)  # no transcript_path at all
+        check("an unresolvable run file still satisfies the close gate (fail-open)",
+              not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_require_verdict_false_restores_old_behavior():
+    """EN/KO: require_verdict:false 는 갈라진 정본(구버전 critic)을 위한 완화다 — 종전처럼 끝나기만 하면 충족."""
+    root = make_repo(dict(ENFORCING, require_verdict=False))
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        tp = make_run(root, "a1", "VERDICT 줄이 없는 옛 critic 보고")
+        stop_verifier(root, transcript_path=tp)
+        check("require_verdict=false satisfies close even without a VERDICT line",
+              not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def write_receipt(root, all_ok, ts):
+    d = os.path.join(root, ".claude", "state")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "verify-receipt.json"), "w", encoding="utf-8") as fh:
+        json.dump({"ts": ts, "commands": [{"cmd": "true", "exit": 0 if all_ok else 1}],
+                   "all_ok": all_ok}, fh)
+
+
+def test_receipt_fresh_and_ok_satisfies_close():
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        write_receipt(root, True, time.time() + 60)
+        check("a fresh all_ok receipt satisfies the close gate",
+              not blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_stale_does_not_satisfy_close():
+    """EN/KO: 영수증 시각이 마지막 쓰기보다 앞이면(낡음) close 를 못 푼다."""
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        write_receipt(root, True, 1)  # 1970 — far older than the write just made
+        check("a stale receipt does not satisfy close", blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_all_ok_false_does_not_satisfy_close():
+    """EN/KO: 명령 중 하나라도 실패한(all_ok=false) 영수증은 close 를 못 푼다."""
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        write_receipt(root, False, time.time() + 60)
+        check("a receipt with all_ok=false does not satisfy close",
+              blocked(stop(root)[1]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_receipt_alone_satisfies_close_without_any_verifier():
+    """EN/KO: 검증자를 한 번도 안 띄워도, 영수증 하나만으로 close 가 풀린다 —
+    화면·API 가 없는 변경은 critic 을 아예 스폰하지 않는다는 설계(D6)의 핵심."""
+    root = make_repo(ENFORCING)
+    try:
+        run(root, write_payload(root, "base/v.md", actor="sub"))
+        write_receipt(root, True, time.time() + 60)
+        code, out, _ = stop(root)
+        check("a receipt alone closes a delegated turn with zero verifier spawns",
+              not blocked(out), repr(out[:120]))
+    finally:
+        shutil.rmtree(root)
+
+
+def test_session_start_injects_config_summary():
+    """EN/KO: 생성된 설정 요약이 매 세션 주입되고, 손으로 쓴 사본과 달리 cfg 값 그대로다."""
+    root = make_repo(ENFORCING)
+    try:
+        code, out, _ = session_start(root)
+        payload = json.loads(out)["hookSpecificOutput"]
+        text = payload["additionalContext"]
+        check("config summary names enforce and the file-limit from cfg",
+              "enforce=True" in text and "main_thread_file_limit=2" in text, repr(text[:200]))
+        check("config summary points at CORE.md as the normative source",
+              "harness/CORE.md" in text)
+    finally:
+        shutil.rmtree(root)
+
+
+def test_claude_state_path_is_always_exempt():
+    """
+    EN: `.claude/state/` must never be product, even if a project's own config
+        covers it — verify.sh writes its receipt there, and gating that write
+        would block the very mechanism meant to satisfy the close gate.
+    KO: `.claude/state/` 는 프로젝트 설정이 그것을 덮어도 절대 산출물이 아니어야
+        한다 — verify.sh 가 영수증을 거기 쓰는데, 그 쓰기를 막으면 close 게이트를
+        충족시키려는 바로 그 장치가 막힌다.
+    """
+    root = make_repo(dict(ENFORCING, product=["**"]))
+    try:
+        check("direct write under .claude/state/ is not gated even if product covers everything",
+              run(root, write_payload(root, ".claude/state/verify-receipt.json"))[0] == 0)
+        p = {
+            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
+            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "tool_input": {"command": "echo x > .claude/state/verify-receipt.json"},
+        }
+        check("bash write under .claude/state/ is not gated either", run(root, p)[0] == 0)
     finally:
         shutil.rmtree(root)
 
