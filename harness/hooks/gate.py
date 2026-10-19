@@ -228,7 +228,9 @@ def emit_metric(root, cfg, record):
         return
     try:
         record["ts"] = int(time.time())
-        with open(os.path.join(state_dir(root), METRICS_NAME), "a", encoding="utf-8") as fh:
+        with open(
+            os.path.join(state_dir(root), METRICS_NAME), "a", encoding="utf-8"
+        ) as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -431,7 +433,11 @@ def brief_cites_file(root, prompt):
 
 
 def counter_file(root, payload):
-    sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
+    sid = "".join(
+        c
+        for c in str(payload.get("session_id", "nosession"))
+        if c.isalnum() or c == "-"
+    )
     return os.path.join(state_dir(root), "gate-%s.json" % (sid or "nosession"))
 
 
@@ -457,7 +463,11 @@ def approval_file(root, payload):
         세션은 볼 수 없다)와 단일 사용(spawn_gate 가 소비하며 삭제한다).
         청소는 sweep_stale_turns() 의 기존 24시간 규칙에 얹는다.
     """
-    sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
+    sid = "".join(
+        c
+        for c in str(payload.get("session_id", "nosession"))
+        if c.isalnum() or c == "-"
+    )
     return os.path.join(state_dir(root), "approval-%s.json" % (sid or "nosession"))
 
 
@@ -646,7 +656,7 @@ def bash_targets(command, root, cfg):
         #        독립 판정이다. receipt_gate() 가 후자만 걸러 전용 메시지로 막는다).
         if is_product(root, cfg, path) or is_receipt_path(root, path):
             rel = rel_path(root, path)
-            if rel not in hits:      # dedup here, so bash_gate's join stays 1:1 with files
+            if rel not in hits:  # dedup here, so bash_gate's join stays 1:1 with files
                 hits.append(rel)
     return hits
 
@@ -672,12 +682,21 @@ def bash_gate(root, cfg, payload, base):
     hits = bash_targets((payload.get("tool_input") or {}).get("command", ""), root, cfg)
     if not hits:
         allow()
-    emit_metric(root, cfg, dict(base, decision="deny" if cfg["enforce"] else "observe",
-                                reason="bash-bypass", paths=hits[:5]))
+    emit_metric(
+        root,
+        cfg,
+        dict(
+            base,
+            decision="deny" if cfg["enforce"] else "observe",
+            reason="bash-bypass",
+            paths=hits[:5],
+        ),
+    )
     if cfg["enforce"]:
         deny(
             "[harness] 메인 스레드는 Bash 로 산출물 파일을 수정할 수 없다: %s\n"
-            "Edit/Write 를 쓰거나 maker 서브에이전트에 위임하라.\n" % ", ".join(hits[:5])
+            "Edit/Write 를 쓰거나 maker 서브에이전트에 위임하라.\n"
+            % ", ".join(hits[:5])
         )
     allow()
 
@@ -716,8 +735,15 @@ def receipt_gate(root, cfg, payload, base, tool):
         hit = is_receipt_path(root, path)
     if not hit:
         return
-    emit_metric(root, cfg, dict(base, decision="deny" if cfg["enforce"] else "observe",
-                                reason="receipt-forgery"))
+    emit_metric(
+        root,
+        cfg,
+        dict(
+            base,
+            decision="deny" if cfg["enforce"] else "observe",
+            reason="receipt-forgery",
+        ),
+    )
     if cfg["enforce"]:
         deny(
             "[harness] verify-receipt.json 은 `bash harness/tools/verify.sh` 만 쓴다.\n"
@@ -745,26 +771,49 @@ def write_gate(root, cfg, payload, base, actor, rel):
     if actor == "sub":
         state["delegated"] = True
         write_counter(cpath, state)
-        emit_metric(root, cfg, dict(base, decision="allow", reason="subagent", path=rel))
+        emit_metric(
+            root, cfg, dict(base, decision="allow", reason="subagent", path=rel)
+        )
         allow()
 
     if rel in state["files"]:
         write_counter(cpath, state)
-        emit_metric(root, cfg, dict(base, decision="allow", reason="same-file", path=rel))
+        emit_metric(
+            root, cfg, dict(base, decision="allow", reason="same-file", path=rel)
+        )
         allow()
 
     limit = int(cfg.get("main_thread_file_limit", 2))
     if len(state["files"]) < limit:
         state["files"].append(rel)
         write_counter(cpath, state)
-        emit_metric(root, cfg, dict(base, decision="allow", reason="under-limit",
-                                    path=rel, count=len(state["files"]), limit=limit))
+        emit_metric(
+            root,
+            cfg,
+            dict(
+                base,
+                decision="allow",
+                reason="under-limit",
+                path=rel,
+                count=len(state["files"]),
+                limit=limit,
+            ),
+        )
         allow()
 
     write_counter(cpath, state)
-    emit_metric(root, cfg, dict(base, decision="deny" if cfg["enforce"] else "observe",
-                                reason="over-limit", path=rel,
-                                count=len(state["files"]), limit=limit))
+    emit_metric(
+        root,
+        cfg,
+        dict(
+            base,
+            decision="deny" if cfg["enforce"] else "observe",
+            reason="over-limit",
+            path=rel,
+            count=len(state["files"]),
+            limit=limit,
+        ),
+    )
     if cfg["enforce"]:
         deny(
             "[harness] 이번 턴에 메인 스레드가 직접 고친 산출물 파일이 이미 %d 개다 (%s).\n"
@@ -836,14 +885,27 @@ def spawn_gate(root, cfg, payload, base):
                 os.remove(apath)
             except OSError:
                 pass
-        emit_metric(root, cfg, dict(
-            base, decision="allow",
-            reason="spawn-approved" if state["approved"] else "spawn-approved-carried"))
+        emit_metric(
+            root,
+            cfg,
+            dict(
+                base,
+                decision="allow",
+                reason="spawn-approved"
+                if state["approved"]
+                else "spawn-approved-carried",
+            ),
+        )
         allow()
 
     enforcing = cfg.get("approval_gate") and cfg.get("enforce")
-    emit_metric(root, cfg, dict(base, decision="deny" if enforcing else "observe",
-                                reason="spawn-unapproved"))
+    emit_metric(
+        root,
+        cfg,
+        dict(
+            base, decision="deny" if enforcing else "observe", reason="spawn-unapproved"
+        ),
+    )
     if enforcing:
         deny(
             "[harness] '%s' 는 쓰기 권한 역할이라 사용자 승인 없이 띄울 수 없다.\n"
@@ -918,14 +980,18 @@ def handle_posttooluse(root, cfg, payload):
         write_counter(cpath, state)
         # EN/KO: also record it outside the turn — see approval_file().
         write_counter(approval_file(root, payload), {"approved": True})
-        emit_metric(root, cfg, {
-            "event": "PostToolUse",
-            "session": payload.get("session_id"),
-            "actor": "main",
-            "tool": "ExitPlanMode",
-            "decision": "allow",
-            "reason": "approval-recorded",
-        })
+        emit_metric(
+            root,
+            cfg,
+            {
+                "event": "PostToolUse",
+                "session": payload.get("session_id"),
+                "actor": "main",
+                "tool": "ExitPlanMode",
+                "decision": "allow",
+                "reason": "approval-recorded",
+            },
+        )
     allow()
 
 
@@ -944,7 +1010,10 @@ def load_cost_module():
     """
     try:
         mod_path = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "..", "tools", "subagent_cost.py"
+            os.path.dirname(os.path.realpath(__file__)),
+            "..",
+            "tools",
+            "subagent_cost.py",
         )
         spec = importlib.util.spec_from_file_location("subagent_cost", mod_path)
         module = importlib.util.module_from_spec(spec)
@@ -1145,7 +1214,9 @@ def handle_subagent_stop(root, cfg, payload):
             reason = "verified"
         else:
             jsonl_path = resolve_subagent_jsonl(payload)
-            verdict, resolved = read_verdict(jsonl_path) if jsonl_path else (None, False)
+            verdict, resolved = (
+                read_verdict(jsonl_path) if jsonl_path else (None, False)
+            )
             if not resolved:
                 state["verified"] = True
                 reason = "verified-unparsed"
@@ -1164,20 +1235,24 @@ def handle_subagent_stop(root, cfg, payload):
                 reason = "no-verdict"
         write_counter(cpath, state)
     cost, cost_resolved, agent_id_raw = compute_cost(payload)
-    emit_metric(root, cfg, {
-        "event": "SubagentStop",
-        "session": payload.get("session_id"),
-        # EN/KO: turn key, so a later reader can tell whether this event carried
-        #        one at all — the whole turn-scoping design depends on it.
-        "turn": turn_key(payload),
-        "actor": "sub",
-        "agent_type": agent_type,
-        "agent_id_raw": agent_id_raw,
-        "decision": "allow",
-        "reason": reason,
-        "cost": cost,
-        "cost_resolved": cost_resolved,
-    })
+    emit_metric(
+        root,
+        cfg,
+        {
+            "event": "SubagentStop",
+            "session": payload.get("session_id"),
+            # EN/KO: turn key, so a later reader can tell whether this event carried
+            #        one at all — the whole turn-scoping design depends on it.
+            "turn": turn_key(payload),
+            "actor": "sub",
+            "agent_type": agent_type,
+            "agent_id_raw": agent_id_raw,
+            "decision": "allow",
+            "reason": reason,
+            "cost": cost,
+            "cost_resolved": cost_resolved,
+        },
+    )
     allow()
 
 
@@ -1271,17 +1346,21 @@ def handle_stop(root, cfg, payload):
     if blocking:
         state["close_blocks"] += 1
         write_counter(cpath, state)
-        emit_metric(root, cfg, dict(base, decision="block", reason="unverified",
-                                    blocks=state["close_blocks"]))
+        emit_metric(
+            root,
+            cfg,
+            dict(
+                base,
+                decision="block",
+                reason="unverified",
+                blocks=state["close_blocks"],
+            ),
+        )
         verdict = state.get("verdict")
         if verdict == "FAIL":
-            reason_msg = (
-                "[harness] critic 이 FAIL 을 냈다. 고치고 다시 검증하거나 사용자에게 올려라.\n"
-            )
+            reason_msg = "[harness] critic 이 FAIL 을 냈다. 고치고 다시 검증하거나 사용자에게 올려라.\n"
         elif verdict is None and state.get("verifier_ran"):
-            reason_msg = (
-                "[harness] critic 이 설계만 냈다(판정 없음). 승인하고 수행 스폰을 돌려라.\n"
-            )
+            reason_msg = "[harness] critic 이 설계만 냈다(판정 없음). 승인하고 수행 스폰을 돌려라.\n"
         else:
             reason_msg = (
                 "[harness] 이번 턴에 산출물이 바뀌었는데 검증자가 돌지 않았다: %s\n"
@@ -1289,15 +1368,24 @@ def handle_stop(root, cfg, payload):
                 "`bash harness/tools/verify.sh` 를 돌리고 끝내라.\n"
                 % ", ".join(state["wrote"][:5])
             )
-        print(json.dumps({"decision": "block", "reason": reason_msg}, ensure_ascii=False))
+        print(
+            json.dumps({"decision": "block", "reason": reason_msg}, ensure_ascii=False)
+        )
         allow()
 
     try:
         os.remove(cpath)
     except OSError:
         pass
-    emit_metric(root, cfg, dict(base, decision="allow",
-                                reason="verified" if state["verified"] else "turn-reset"))
+    emit_metric(
+        root,
+        cfg,
+        dict(
+            base,
+            decision="allow",
+            reason="verified" if state["verified"] else "turn-reset",
+        ),
+    )
     allow()
 
 
@@ -1338,7 +1426,11 @@ def config_summary(cfg):
     verify_cmds = cfg.get("verify_commands", [])
     lines = [
         "[harness] enforce=%s · product=%s · main_thread_file_limit=%s"
-        % (cfg.get("enforce"), cfg.get("product", []), cfg.get("main_thread_file_limit")),
+        % (
+            cfg.get("enforce"),
+            cfg.get("product", []),
+            cfg.get("main_thread_file_limit"),
+        ),
         "verifiers=%s · verify_commands=%d개 · max_close_blocks=%s"
         % (cfg.get("verifiers", []), len(verify_cmds), cfg.get("max_close_blocks")),
         "막는 것: (1) 메인 스레드가 한 턴에 산출물 %s개 초과 수정 (2) 메인 스레드가 Bash 로"
@@ -1364,13 +1456,17 @@ def handle_session_start(root, cfg, payload):
         손으로 뭔가를 써뒀는지에 더는 의존하지 않는다.
     """
     sweep_stale_turns(root)
-    emit_metric(root, cfg, {
-        "event": payload.get("hook_event_name", "SessionStart"),
-        "session": payload.get("session_id"),
-        "actor": "sub" if payload.get("agent_id") else "main",
-        "decision": "allow",
-        "reason": "start",
-    })
+    emit_metric(
+        root,
+        cfg,
+        {
+            "event": payload.get("hook_event_name", "SessionStart"),
+            "session": payload.get("session_id"),
+            "actor": "sub" if payload.get("agent_id") else "main",
+            "decision": "allow",
+            "reason": "start",
+        },
+    )
     text = config_summary(cfg)
     facts = os.path.join(root, FACTS_REL)
     try:
@@ -1378,12 +1474,17 @@ def handle_session_start(root, cfg, payload):
             text = text + "\n\n" + fh.read()
     except OSError:
         pass
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": payload.get("hook_event_name", "SessionStart"),
-            "additionalContext": text,
-        }
-    }, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": payload.get("hook_event_name", "SessionStart"),
+                    "additionalContext": text,
+                }
+            },
+            ensure_ascii=False,
+        )
+    )
     allow()
 
 

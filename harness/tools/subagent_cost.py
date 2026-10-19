@@ -17,6 +17,7 @@ KO: 기록된 서브에이전트 트랜스크립트를 읽기만 하는 집계�
     cache_creation_input_tokens·cache_read_input_tokens)가, 모든 레코드
     (user/assistant 공통)에는 ISO-8601 `timestamp` 가 있다.
 """
+
 import argparse
 import glob
 import json
@@ -196,7 +197,9 @@ def print_table(summary, total_skipped):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session", default=None, help="session id to restrict to")
-    parser.add_argument("--json", action="store_true", help="print JSON instead of a table")
+    parser.add_argument(
+        "--json", action="store_true", help="print JSON instead of a table"
+    )
     args = parser.parse_args()
 
     by_type, total_skipped = collect(args.session)

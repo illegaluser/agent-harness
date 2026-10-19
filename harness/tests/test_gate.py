@@ -27,7 +27,9 @@ import sys
 import tempfile
 import time
 
-GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "gate.py")
+GATE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "gate.py"
+)
 GATE = os.path.normpath(GATE)
 
 PASSED = []
@@ -38,7 +40,9 @@ def make_repo(config):
     root = tempfile.mkdtemp(prefix="gate-test-")
     os.makedirs(os.path.join(root, ".claude"), exist_ok=True)
     os.makedirs(os.path.join(root, "base"), exist_ok=True)
-    with open(os.path.join(root, ".claude", "harness.json"), "w", encoding="utf-8") as fh:
+    with open(
+        os.path.join(root, ".claude", "harness.json"), "w", encoding="utf-8"
+    ) as fh:
         json.dump(config, fh)
     return root
 
@@ -75,11 +79,20 @@ def write_payload(root, path, actor="main", turn="t1", tool="Write", agent_type=
 
 def check(name, cond, detail=""):
     (PASSED if cond else FAILED).append(name)
-    print(("  ok   " if cond else "  FAIL ") + name + (("  — " + detail) if detail and not cond else ""))
+    print(
+        ("  ok   " if cond else "  FAIL ")
+        + name
+        + (("  — " + detail) if detail and not cond else "")
+    )
 
 
-ENFORCING = {"enforce": True, "product": ["base/**"], "exempt": ["base/EXEMPT.md"],
-             "main_thread_file_limit": 2, "metrics": True}
+ENFORCING = {
+    "enforce": True,
+    "product": ["base/**"],
+    "exempt": ["base/EXEMPT.md"],
+    "main_thread_file_limit": 2,
+    "metrics": True,
+}
 
 
 def test_main_thread_blocked_over_limit():
@@ -90,7 +103,11 @@ def test_main_thread_blocked_over_limit():
             check("main thread allowed under limit (file %d)" % i, code == 0)
         code, _, err = run(root, write_payload(root, "base/f3.md"))
         check("main thread DENIED on 3rd product file", code == 2, "exit=%d" % code)
-        check("deny message reaches the model via stderr", "harness" in err, repr(err[:80]))
+        check(
+            "deny message reaches the model via stderr",
+            "harness" in err,
+            repr(err[:80]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -103,7 +120,11 @@ def test_subagent_never_blocked():
         for i in range(1, 7):
             code, _, _ = run(root, write_payload(root, "base/s%d.md" % i, actor="sub"))
             codes.append(code)
-        check("subagent allowed for 6 product files (limit is 2)", codes == [0] * 6, str(codes))
+        check(
+            "subagent allowed for 6 product files (limit is 2)",
+            codes == [0] * 6,
+            str(codes),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -119,9 +140,18 @@ def test_agent_type_alone_is_main_thread():
     root = make_repo(ENFORCING)
     try:
         for i in (1, 2):
-            run(root, write_payload(root, "base/a%d.md" % i, agent_type="general-purpose"))
-        code, _, _ = run(root, write_payload(root, "base/a3.md", agent_type="general-purpose"))
-        check("agent_type without agent_id counts as MAIN (denied)", code == 2, "exit=%d" % code)
+            run(
+                root,
+                write_payload(root, "base/a%d.md" % i, agent_type="general-purpose"),
+            )
+        code, _, _ = run(
+            root, write_payload(root, "base/a3.md", agent_type="general-purpose")
+        )
+        check(
+            "agent_type without agent_id counts as MAIN (denied)",
+            code == 2,
+            "exit=%d" % code,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -141,7 +171,11 @@ def test_same_file_not_double_counted():
     root = make_repo(ENFORCING)
     try:
         codes = [run(root, write_payload(root, "base/same.md"))[0] for _ in range(6)]
-        check("re-editing one file does not consume the budget", codes == [0] * 6, str(codes))
+        check(
+            "re-editing one file does not consume the budget",
+            codes == [0] * 6,
+            str(codes),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -168,6 +202,7 @@ def test_stop_resets_without_prompt_id():
     """
     root = make_repo(dict(ENFORCING, close_gate=False))
     try:
+
         def no_prompt_id(path):
             p = write_payload(root, path)
             del p["prompt_id"]
@@ -179,7 +214,11 @@ def test_stop_resets_without_prompt_id():
         check("budget exhausted without prompt_id", code == 2, "exit=%d" % code)
         run(root, {"hook_event_name": "Stop", "session_id": "sess-1", "cwd": root})
         code, _, _ = run(root, no_prompt_id("base/n4.md"))
-        check("Stop event restores the budget (prompt_id fallback)", code == 0, "exit=%d" % code)
+        check(
+            "Stop event restores the budget (prompt_id fallback)",
+            code == 0,
+            "exit=%d" % code,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -188,12 +227,20 @@ def test_bash_bypass():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
             "tool_input": {"command": "sed -i '' 's/a/b/' base/f.md"},
         }
         code, _, err = run(root, p)
-        check("main thread Bash in-place edit of a product file DENIED", code == 2, "exit=%d" % code)
+        check(
+            "main thread Bash in-place edit of a product file DENIED",
+            code == 2,
+            "exit=%d" % code,
+        )
         check("bash deny names the offending path", "base/f.md" in err, repr(err[:100]))
 
         p["tool_input"] = {"command": "grep -rn foo base/"}
@@ -213,8 +260,12 @@ def test_bash_write_targets_blocked():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {"command": "echo x > base/f.md"}
@@ -268,8 +319,11 @@ def test_bash_write_targets_blocked():
         p["tool_input"] = {"command": "echo a > base/f.md; echo b >> base/f.md"}
         code, _, err = run(root, p)
         check("duplicate targets named once (exit)", code == 2, "exit=%d" % code)
-        check("duplicate targets named once (dedup)", err.count("base/f.md") == 1,
-              repr(err))
+        check(
+            "duplicate targets named once (dedup)",
+            err.count("base/f.md") == 1,
+            repr(err),
+        )
 
         p["tool_input"] = {"command": "rm base/f.md"}
         check("rm on a product file DENIED", run(root, p)[0] == 2)
@@ -290,19 +344,23 @@ def test_bash_read_only_allowed():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {
             "command": 'grep -rn "reasoning_effort:\\|^effort:" base/agents/*.md '
-                       'base/x/*.md ~/.claude/agents/*.md 2>/dev/null | sed "s\\|$HOME\\|~\\|"'
+            'base/x/*.md ~/.claude/agents/*.md 2>/dev/null | sed "s\\|$HOME\\|~\\|"'
         }
         check("real false positive #1", run(root, p)[0] == 0)
 
         p["tool_input"] = {
-            "command": "grep -rn \"reasoning_effort:\" base/agents base/x "
-                       "/Users/x/.claude/agents 2>/dev/null"
+            "command": 'grep -rn "reasoning_effort:" base/agents base/x '
+            "/Users/x/.claude/agents 2>/dev/null"
         }
         check("real false positive #2", run(root, p)[0] == 0)
 
@@ -369,8 +427,12 @@ def test_bash_anchor_and_lookbehind_regression():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {"command": "/usr/bin/sed -i '' 's/a/b/' base/f.md"}
@@ -398,16 +460,22 @@ def test_bash_anchor_and_lookbehind_regression():
         check("2>&1 still not a target (no new false positive)", run(root, p)[0] == 0)
 
         p["tool_input"] = {"command": "cmd < base/f.md"}
-        check("plain input redirect is not a target (no new false positive)",
-              run(root, p)[0] == 0)
+        check(
+            "plain input redirect is not a target (no new false positive)",
+            run(root, p)[0] == 0,
+        )
 
         p["tool_input"] = {"command": "cmd <<< 'x' > /tmp/o"}
-        check("here-string redirect to /tmp is not a target (no new false positive)",
-              run(root, p)[0] == 0)
+        check(
+            "here-string redirect to /tmp is not a target (no new false positive)",
+            run(root, p)[0] == 0,
+        )
 
         p["tool_input"] = {"command": "cat <<'EOF' > /tmp/o\nhi\nEOF"}
-        check("heredoc to /tmp is not a target (no new false positive)",
-              run(root, p)[0] == 0)
+        check(
+            "heredoc to /tmp is not a target (no new false positive)",
+            run(root, p)[0] == 0,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -428,8 +496,12 @@ def test_bash_cd_tracking():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {"command": "cd base && echo x > f.md"}
@@ -442,15 +514,19 @@ def test_bash_cd_tracking():
         check("cd with ; separator is tracked too", run(root, p)[0] == 2)
 
         p["tool_input"] = {"command": "cd /tmp && echo x > out.txt"}
-        check("cd into a non-product dir then write allowed (no new false positive)",
-              run(root, p)[0] == 0)
+        check(
+            "cd into a non-product dir then write allowed (no new false positive)",
+            run(root, p)[0] == 0,
+        )
 
         p["tool_input"] = {"command": "cd .. && ls"}
         check("a harmless cd with no write is unaffected", run(root, p)[0] == 0)
 
         p["tool_input"] = {"command": "cd - && echo x > f.md"}
-        check("cd - gives up tracking and falls back to root (miss, accepted)",
-              run(root, p)[0] == 0)
+        check(
+            "cd - gives up tracking and falls back to root (miss, accepted)",
+            run(root, p)[0] == 0,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -459,12 +535,18 @@ def test_bash_directory_targets():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {"command": "rm -rf base"}
-        check("rm of a product dir without a trailing slash DENIED", run(root, p)[0] == 2)
+        check(
+            "rm of a product dir without a trailing slash DENIED", run(root, p)[0] == 2
+        )
 
         p["tool_input"] = {"command": "rm -r base/sub"}
         check("rm -r of a product subdir DENIED", run(root, p)[0] == 2)
@@ -502,10 +584,15 @@ def test_bash_directory_targets():
         check("docker rm names a container, not a path, allowed", run(root, p)[0] == 0)
 
         # EN/KO: A4 — 마커 목록에 새로 들어온 쓰기 명령들.
-        for cmd in ("awk -i inplace 1 base/f.md", "ed -s base/f.md",
-                    "git checkout -- base/f.md", "git restore base/f.md",
-                    "git apply p.diff base/f.md", "truncate -s 0 base/f.md",
-                    "ln -sf /etc/passwd base/f.md"):
+        for cmd in (
+            "awk -i inplace 1 base/f.md",
+            "ed -s base/f.md",
+            "git checkout -- base/f.md",
+            "git restore base/f.md",
+            "git apply p.diff base/f.md",
+            "truncate -s 0 base/f.md",
+            "ln -sf /etc/passwd base/f.md",
+        ):
             p["tool_input"] = {"command": cmd}
             check("in-place writer DENIED: %s" % cmd.split()[0], run(root, p)[0] == 2)
     finally:
@@ -517,25 +604,37 @@ def test_bash_known_misses():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {"command": "mv base /tmp/base"}
-        check("known miss: moving a product dir out of the repo is not caught",
-              run(root, p)[0] == 0)
+        check(
+            "known miss: moving a product dir out of the repo is not caught",
+            run(root, p)[0] == 0,
+        )
 
         p["tool_input"] = {"command": "rm -rf ."}
-        check("known miss: `rm -rf .` is not caught (repo root matches no glob)",
-              run(root, p)[0] == 0)
+        check(
+            "known miss: `rm -rf .` is not caught (repo root matches no glob)",
+            run(root, p)[0] == 0,
+        )
 
         p["tool_input"] = {"command": "echo${IFS}PWNED${IFS}>${IFS}base/f.md"}
-        check("known miss: $IFS in place of spaces breaks the redirect token",
-              run(root, p)[0] == 0)
+        check(
+            "known miss: $IFS in place of spaces breaks the redirect token",
+            run(root, p)[0] == 0,
+        )
 
         p["tool_input"] = {"command": "echo base/f.md | xargs -I{} tee {} </dev/null"}
-        check("known miss: xargs {} substitution hides the real target from tee",
-              run(root, p)[0] == 0)
+        check(
+            "known miss: xargs {} substitution hides the real target from tee",
+            run(root, p)[0] == 0,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -553,32 +652,49 @@ def test_bash_marker_is_the_command_not_a_flag():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
         allowed = [
-            ("running an install.sh is not installing onto it",
-             "bash base/install.sh /tmp/target"),
-            ("running install.sh by path is allowed",
-             "./base/install.sh /tmp/target"),
-            ("--uninstall does not read as the install command",
-             "bash base/install.sh --uninstall /tmp/target"),
-            ("pip install with a product requirements file allowed",
-             "pip install -r base/requirements.txt"),
-            ("npm install pointed at a product dir allowed",
-             "npm install --prefix base/x"),
-            ("a --rm flag is not the rm command",
-             "docker run --rm -v ./base:/data img"),
+            (
+                "running an install.sh is not installing onto it",
+                "bash base/install.sh /tmp/target",
+            ),
+            ("running install.sh by path is allowed", "./base/install.sh /tmp/target"),
+            (
+                "--uninstall does not read as the install command",
+                "bash base/install.sh --uninstall /tmp/target",
+            ),
+            (
+                "pip install with a product requirements file allowed",
+                "pip install -r base/requirements.txt",
+            ),
+            (
+                "npm install pointed at a product dir allowed",
+                "npm install --prefix base/x",
+            ),
+            (
+                "a --rm flag is not the rm command",
+                "docker run --rm -v ./base:/data img",
+            ),
         ]
         for name, command in allowed:
             p["tool_input"] = {"command": command}
             check(name, run(root, p)[0] == 0)
 
         blocked = [
-            ("coreutils install to a product file DENIED",
-             "install -m 644 /tmp/x base/f.md"),
-            ("coreutils install by absolute path DENIED",
-             "/usr/bin/install -m 644 /tmp/x base/f.md"),
+            (
+                "coreutils install to a product file DENIED",
+                "install -m 644 /tmp/x base/f.md",
+            ),
+            (
+                "coreutils install by absolute path DENIED",
+                "/usr/bin/install -m 644 /tmp/x base/f.md",
+            ),
             ("rm by absolute path DENIED", "/bin/rm -f base/f.md"),
             ("tee by absolute path DENIED", "echo x | /usr/bin/tee base/f.md"),
         ]
@@ -601,17 +717,30 @@ def test_bash_cd_argument_forms():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
         blocked = [
             ("double-quoted cd target tracked", 'cd "base" && echo x > f.md'),
             ("single-quoted cd target tracked", "cd 'base' && echo x > f.md"),
-            ("cd past the -- end-of-options marker tracked", "cd -- base && echo x > f.md"),
+            (
+                "cd past the -- end-of-options marker tracked",
+                "cd -- base && echo x > f.md",
+            ),
             ("cd with a -P flag tracked", "cd -P base && echo x > f.md"),
-            ("cd with flag, marker and quotes tracked", "cd -L -- 'base' && echo x > f.md"),
+            (
+                "cd with flag, marker and quotes tracked",
+                "cd -L -- 'base' && echo x > f.md",
+            ),
             ("cd with a trailing comment tracked", "cd base # go\necho x > f.md"),
-            ("cd then a parent-relative write tracked", "cd base/sub && echo x > ../f.md"),
+            (
+                "cd then a parent-relative write tracked",
+                "cd base/sub && echo x > ../f.md",
+            ),
         ]
         for name, command in blocked:
             p["tool_input"] = {"command": command}
@@ -622,7 +751,10 @@ def test_bash_cd_argument_forms():
             ("cd with no argument resets to root", "cd && echo x > out.txt"),
             ("cd - resets to root", "cd - && echo x > out.txt"),
             ("cd into a product dir, read-only, allowed", "cd base && grep -rn foo ."),
-            ("cd back out before writing allowed", "cd base && cd /tmp && echo x > f.md"),
+            (
+                "cd back out before writing allowed",
+                "cd base && cd /tmp && echo x > f.md",
+            ),
             ("cd into a non-product dir allowed", "cd notes && echo x > f.md"),
         ]
         for name, command in allowed:
@@ -636,8 +768,12 @@ def test_exempt_subtree_covers_its_directory():
     root = make_repo(dict(ENFORCING, exempt=["base/sub/**"]))
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
         }
 
         p["tool_input"] = {"command": "rm -rf base/sub/"}
@@ -672,11 +808,17 @@ def test_observe_mode_never_denies():
     """
     root = make_repo(dict(ENFORCING, enforce=False))
     try:
-        codes = [run(root, write_payload(root, "base/o%d.md" % i))[0] for i in range(1, 7)]
+        codes = [
+            run(root, write_payload(root, "base/o%d.md" % i))[0] for i in range(1, 7)
+        ]
         check("observe mode allows everything", codes == [0] * 6, str(codes))
-        line = open(os.path.join(root, ".claude", "state", "harness-metrics.jsonl"),
-                    encoding="utf-8").read()
-        check("observe mode still records what it would have blocked", '"observe"' in line)
+        line = open(
+            os.path.join(root, ".claude", "state", "harness-metrics.jsonl"),
+            encoding="utf-8",
+        ).read()
+        check(
+            "observe mode still records what it would have blocked", '"observe"' in line
+        )
     finally:
         shutil.rmtree(root)
 
@@ -701,7 +843,11 @@ def test_fail_open():
         code, _, _ = run(root, None, raw="{ this is not json")
         check("malformed payload fails open", code == 0, "exit=%d" % code)
         code, _, _ = run(root, {"hook_event_name": "PreToolUse", "tool_name": "Write"})
-        check("payload missing every optional field fails open", code == 0, "exit=%d" % code)
+        check(
+            "payload missing every optional field fails open",
+            code == 0,
+            "exit=%d" % code,
+        )
         code, _, _ = run(root, {"hook_event_name": "SomeFutureEvent"})
         check("unknown event passes through", code == 0, "exit=%d" % code)
     finally:
@@ -712,7 +858,9 @@ def test_unconfigured_install_is_inert():
     """EN/KO: No config at all must mean no obstruction, not a default guess."""
     root = tempfile.mkdtemp(prefix="gate-test-")
     try:
-        codes = [run(root, write_payload(root, "base/u%d.md" % i))[0] for i in range(1, 7)]
+        codes = [
+            run(root, write_payload(root, "base/u%d.md" % i))[0] for i in range(1, 7)
+        ]
         check("no harness.json → gate is inert", codes == [0] * 6, str(codes))
     finally:
         shutil.rmtree(root)
@@ -759,13 +907,16 @@ def test_direct_handling_owes_no_verification():
     root = make_repo(ENFORCING)
     try:
         run(root, write_payload(root, "base/d1.md"))
-        check("1 file handled directly does not block the close",
-              not blocked(stop(root)[1]))
+        check(
+            "1 file handled directly does not block the close",
+            not blocked(stop(root)[1]),
+        )
         root2 = make_repo(ENFORCING)
         for i in (1, 2):
             run(root2, write_payload(root2, "base/d%d.md" % i))
-        check("2 files (at the budget) still does not block",
-              not blocked(stop(root2)[1]))
+        check(
+            "2 files (at the budget) still does not block", not blocked(stop(root2)[1])
+        )
         shutil.rmtree(root2)
     finally:
         shutil.rmtree(root)
@@ -776,8 +927,10 @@ def test_verifier_satisfies_close_gate():
     try:
         run(root, write_payload(root, "base/v1.md", actor="sub"))
         stop(root, event="SubagentStop", agent_type="critic", agent_id="a1")
-        check("a critic subagent finishing satisfies the close gate",
-              not blocked(stop(root)[1]))
+        check(
+            "a critic subagent finishing satisfies the close gate",
+            not blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -813,8 +966,11 @@ def test_close_gate_is_bounded():
     try:
         run(root, write_payload(root, "base/b1.md", actor="sub"))
         results = [blocked(stop(root)[1]) for _ in range(4)]
-        check("close gate blocks at most max_close_blocks times then releases",
-              results == [True, True, False, False], str(results))
+        check(
+            "close gate blocks at most max_close_blocks times then releases",
+            results == [True, True, False, False],
+            str(results),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -833,8 +989,11 @@ def test_subagent_stop_does_not_reset_write_budget():
             run(root, write_payload(root, "base/r%d.md" % i))
         stop(root, event="SubagentStop", agent_type="scout", agent_id="a1")
         code, _, _ = run(root, write_payload(root, "base/r3.md"))
-        check("SubagentStop does not restore the main thread's budget",
-              code == 2, "exit=%d" % code)
+        check(
+            "SubagentStop does not restore the main thread's budget",
+            code == 2,
+            "exit=%d" % code,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -854,18 +1013,33 @@ def spawn(root, subagent_type, tool="Agent", session="sess-1", prompt=None):
     #        인수인계 게이트 자체는 prompt 를 넘겨 따로 시험한다.
     if prompt is None:
         prompt = "facts: .claude/harness.json"
-    return run(root, {
-        "hook_event_name": "PreToolUse", "session_id": session, "prompt_id": "t1",
-        "cwd": root, "tool_name": tool, "tool_use_id": "tu-1",
-        "tool_input": {"subagent_type": subagent_type, "prompt": prompt},
-    })
+    return run(
+        root,
+        {
+            "hook_event_name": "PreToolUse",
+            "session_id": session,
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": tool,
+            "tool_use_id": "tu-1",
+            "tool_input": {"subagent_type": subagent_type, "prompt": prompt},
+        },
+    )
 
 
 def approve(root, session="sess-1"):
-    return run(root, {
-        "hook_event_name": "PostToolUse", "session_id": session, "prompt_id": "t1",
-        "cwd": root, "tool_name": "ExitPlanMode", "tool_input": {}, "tool_response": {},
-    })
+    return run(
+        root,
+        {
+            "hook_event_name": "PostToolUse",
+            "session_id": session,
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "ExitPlanMode",
+            "tool_input": {},
+            "tool_response": {},
+        },
+    )
 
 
 def test_approval_gate_blocks_unapproved_maker():
@@ -900,8 +1074,9 @@ def test_exit_plan_mode_records_approval():
     try:
         check("maker blocked before approval", spawn(root, "maker")[0] == 2)
         approve(root)
-        check("maker allowed after an accepted ExitPlanMode",
-              spawn(root, "maker")[0] == 0)
+        check(
+            "maker allowed after an accepted ExitPlanMode", spawn(root, "maker")[0] == 0
+        )
     finally:
         shutil.rmtree(root)
 
@@ -942,8 +1117,10 @@ def test_late_verifier_from_another_turn_does_not_verify_this_one():
     try:
         run(root, write_payload(root, "base/x.md", actor="sub"))  # turn t1 delegates
         stop(root, event="SubagentStop", agent_type="critic", prompt_id="OTHER-TURN")
-        check("a verifier stamped with another turn does not satisfy this close gate",
-              blocked(stop(root, prompt_id="t1")[1]))
+        check(
+            "a verifier stamped with another turn does not satisfy this close gate",
+            blocked(stop(root, prompt_id="t1")[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -969,12 +1146,18 @@ def test_symlink_out_of_the_repo_is_still_product():
         link = os.path.join(root, "base", "link.md")
         os.symlink(target, link)
         try:
-            check("a symlink escaping the repo still counts as product",
-                  run(root, write_payload(root, link))[0] == 0)
-            check("and it consumed a budget slot",
-                  run(root, write_payload(root, "base/b.md"))[0] == 0)
-            check("so the third write is blocked",
-                  run(root, write_payload(root, "base/c.md"))[0] == 2)
+            check(
+                "a symlink escaping the repo still counts as product",
+                run(root, write_payload(root, link))[0] == 0,
+            )
+            check(
+                "and it consumed a budget slot",
+                run(root, write_payload(root, "base/b.md"))[0] == 0,
+            )
+            check(
+                "so the third write is blocked",
+                run(root, write_payload(root, "base/c.md"))[0] == 2,
+            )
         finally:
             shutil.rmtree(outside)
     finally:
@@ -988,12 +1171,18 @@ def test_relative_file_path_is_resolved_against_the_repo():
     """
     root = make_repo(ENFORCING)
     try:
-        check("relative product path counted",
-              run(root, write_payload(root, "base/r1.md"))[0] == 0)
-        check("second relative product path counted",
-              run(root, write_payload(root, "base/r2.md"))[0] == 0)
-        check("third is blocked, so both were counted",
-              run(root, write_payload(root, "base/r3.md"))[0] == 2)
+        check(
+            "relative product path counted",
+            run(root, write_payload(root, "base/r1.md"))[0] == 0,
+        )
+        check(
+            "second relative product path counted",
+            run(root, write_payload(root, "base/r2.md"))[0] == 0,
+        )
+        check(
+            "third is blocked, so both were counted",
+            run(root, write_payload(root, "base/r3.md"))[0] == 2,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1041,8 +1230,10 @@ def test_approval_does_not_leak_across_sessions():
     root = make_repo(ENFORCING)
     try:
         approve(root, session="sess-a")
-        check("another session sees no approval",
-              spawn(root, "maker", session="sess-b")[0] == 2)
+        check(
+            "another session sees no approval",
+            spawn(root, "maker", session="sess-b")[0] == 2,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1062,14 +1253,21 @@ def test_handoff_gate_blocks_a_brief_that_cites_nothing():
     root = make_repo(ENFORCING)
     try:
         approve(root)
-        check("a brief citing no file is DENIED",
-              spawn(root, "maker", prompt="고쳐라. 알아서 찾아봐라.")[0] == 2)
+        check(
+            "a brief citing no file is DENIED",
+            spawn(root, "maker", prompt="고쳐라. 알아서 찾아봐라.")[0] == 2,
+        )
         approve(root)
-        check("a brief citing a real file passes",
-              spawn(root, "maker", prompt="사실은 .claude/harness.json 에 있다")[0] == 0)
+        check(
+            "a brief citing a real file passes",
+            spawn(root, "maker", prompt="사실은 .claude/harness.json 에 있다")[0] == 0,
+        )
         approve(root)
-        check("a path that does not exist does not count",
-              spawn(root, "maker", prompt="사실은 docs/NOPE-does-not-exist.md 에 있다")[0] == 2)
+        check(
+            "a path that does not exist does not count",
+            spawn(root, "maker", prompt="사실은 docs/NOPE-does-not-exist.md 에 있다")[0]
+            == 2,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1081,8 +1279,10 @@ def test_handoff_gate_leaves_other_roles_alone():
     """
     root = make_repo(ENFORCING)
     try:
-        check("scout spawns with a prose-only brief",
-              spawn(root, "scout", prompt="이 저장소를 조사하라")[0] == 0)
+        check(
+            "scout spawns with a prose-only brief",
+            spawn(root, "scout", prompt="이 저장소를 조사하라")[0] == 0,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1110,12 +1310,18 @@ def test_sanctioned_path_runs_end_to_end():
     root = make_repo(ENFORCING)
     try:
         # 1. main thread spends its whole write budget
-        check("first direct write allowed",
-              run(root, write_payload(root, "base/e1.md"))[0] == 0)
-        check("second direct write allowed",
-              run(root, write_payload(root, "base/e2.md"))[0] == 0)
-        check("third is blocked — delegation is now the only way forward",
-              run(root, write_payload(root, "base/e3.md"))[0] == 2)
+        check(
+            "first direct write allowed",
+            run(root, write_payload(root, "base/e1.md"))[0] == 0,
+        )
+        check(
+            "second direct write allowed",
+            run(root, write_payload(root, "base/e2.md"))[0] == 0,
+        )
+        check(
+            "third is blocked — delegation is now the only way forward",
+            run(root, write_payload(root, "base/e3.md"))[0] == 2,
+        )
 
         # 2. the prescribed escape: present a plan, get it accepted
         check("plan approval is recorded", approve(root)[0] == 0)
@@ -1124,12 +1330,16 @@ def test_sanctioned_path_runs_end_to_end():
         stop(root, prompt_id="turn-1")
 
         # 4. delegation must still be possible in the new turn
-        res = spawn(root, "maker", session="sess-1", prompt="계획: .claude/harness.json")
+        res = spawn(
+            root, "maker", session="sess-1", prompt="계획: .claude/harness.json"
+        )
         check("maker still spawnable after the turn boundary", res[0] == 0, str(res[1]))
 
         # 5. the subagent does the work the main thread could not
-        check("subagent writes are not rate-limited",
-              run(root, write_payload(root, "base/e3.md", actor="sub"))[0] == 0)
+        check(
+            "subagent writes are not rate-limited",
+            run(root, write_payload(root, "base/e3.md", actor="sub"))[0] == 0,
+        )
 
         # 6. verification closes the turn
         stop(root, event="SubagentStop", agent_type="critic")
@@ -1184,8 +1394,10 @@ def test_numeric_thresholds_are_documented():
 def test_task_tool_is_gated_too():
     root = make_repo(ENFORCING)
     try:
-        check("Task spawn of maker is gated like Agent",
-              spawn(root, "maker", tool="Task")[0] == 2)
+        check(
+            "Task spawn of maker is gated like Agent",
+            spawn(root, "maker", tool="Task")[0] == 2,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1203,19 +1415,39 @@ def test_all_tools_are_measured():
     root = make_repo(ENFORCING)
     try:
         for tool in ("Read", "Grep", "WebFetch"):
-            run(root, {
-                "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-                "cwd": root, "tool_name": tool, "tool_use_id": "tu-1",
-                "agent_id": "a1", "agent_type": "scout", "tool_input": {},
-            })
-        rows = [json.loads(line) for line in
-                open(os.path.join(root, ".claude", "state", "harness-metrics.jsonl"),
-                     encoding="utf-8") if line.strip()]
+            run(
+                root,
+                {
+                    "hook_event_name": "PreToolUse",
+                    "session_id": "sess-1",
+                    "prompt_id": "t1",
+                    "cwd": root,
+                    "tool_name": tool,
+                    "tool_use_id": "tu-1",
+                    "agent_id": "a1",
+                    "agent_type": "scout",
+                    "tool_input": {},
+                },
+            )
+        rows = [
+            json.loads(line)
+            for line in open(
+                os.path.join(root, ".claude", "state", "harness-metrics.jsonl"),
+                encoding="utf-8",
+            )
+            if line.strip()
+        ]
         tools = [r["tool"] for r in rows if r.get("reason") == "observe"]
-        check("read-only tool calls are recorded", tools == ["Read", "Grep", "WebFetch"],
-              str(tools))
-        check("the recorded call is attributed to the role",
-              all(r.get("agent_type") == "scout" for r in rows), str(rows[:1]))
+        check(
+            "read-only tool calls are recorded",
+            tools == ["Read", "Grep", "WebFetch"],
+            str(tools),
+        )
+        check(
+            "the recorded call is attributed to the role",
+            all(r.get("agent_type") == "scout" for r in rows),
+            str(rows[:1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1238,24 +1470,35 @@ def test_session_start_injects_facts():
     try:
         code, out, _ = session_start(root)
         payload = json.loads(out)["hookSpecificOutput"]
-        check("generated config summary is injected even with no facts file",
-              "[harness]" in payload["additionalContext"]
-              and "harness/CORE.md" in payload["additionalContext"],
-              repr(out[:160]))
+        check(
+            "generated config summary is injected even with no facts file",
+            "[harness]" in payload["additionalContext"]
+            and "harness/CORE.md" in payload["additionalContext"],
+            repr(out[:160]),
+        )
 
-        with open(os.path.join(root, ".claude", "harness-facts.md"), "w",
-                  encoding="utf-8") as fh:
+        with open(
+            os.path.join(root, ".claude", "harness-facts.md"), "w", encoding="utf-8"
+        ) as fh:
             fh.write("ENFORCE_IS_ON")
         code, out, _ = session_start(root)
         payload = json.loads(out)["hookSpecificOutput"]
-        check("facts file content is appended after the generated summary",
-              payload["additionalContext"].endswith("ENFORCE_IS_ON"), repr(out[:200]))
-        check("injection echoes the firing event name",
-              payload["hookEventName"] == "SessionStart", str(payload))
+        check(
+            "facts file content is appended after the generated summary",
+            payload["additionalContext"].endswith("ENFORCE_IS_ON"),
+            repr(out[:200]),
+        )
+        check(
+            "injection echoes the firing event name",
+            payload["hookEventName"] == "SessionStart",
+            str(payload),
+        )
 
         code, out, _ = session_start(root, event="SubagentStart")
-        check("subagents receive the same injection",
-              json.loads(out)["hookSpecificOutput"]["hookEventName"] == "SubagentStart")
+        check(
+            "subagents receive the same injection",
+            json.loads(out)["hookSpecificOutput"]["hookEventName"] == "SubagentStart",
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1275,8 +1518,10 @@ def test_session_start_sweeps_dead_turn_state():
         os.utime(dead, (0, 0))  # 1970 — far past any real turn
         session_start(root)
         check("stale turn state is swept at session start", not os.path.exists(dead))
-        check("live turn state is left alone",
-              len([f for f in os.listdir(sdir) if f.startswith("gate-")]) == 1)
+        check(
+            "live turn state is left alone",
+            len([f for f in os.listdir(sdir) if f.startswith("gate-")]) == 1,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1293,7 +1538,12 @@ def make_run(root, agent_id, text):
     os.makedirs(subagents_dir, exist_ok=True)
     jsonl_path = os.path.join(subagents_dir, "agent-%s.jsonl" % agent_id)
     with open(jsonl_path, "w", encoding="utf-8") as fh:
-        rec = {"message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+        rec = {
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+            }
+        }
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return os.path.join(base_dir, session_name + ".jsonl")
 
@@ -1310,20 +1560,37 @@ def make_handback_run(root, agent_id, text_stub, handback_message):
     os.makedirs(subagents_dir, exist_ok=True)
     jsonl_path = os.path.join(subagents_dir, "agent-%s.jsonl" % agent_id)
     with open(jsonl_path, "w", encoding="utf-8") as fh:
-        text_rec = {"message": {"role": "assistant",
-                                 "content": [{"type": "text", "text": text_stub}]}}
-        handback_rec = {"message": {"role": "assistant", "content": [
-            {"type": "tool_use", "name": "SubagentHandback",
-             "input": {"message": handback_message}},
-        ]}}
+        text_rec = {
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text_stub}],
+            }
+        }
+        handback_rec = {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "SubagentHandback",
+                        "input": {"message": handback_message},
+                    },
+                ],
+            }
+        }
         fh.write(json.dumps(text_rec, ensure_ascii=False) + "\n")
         fh.write(json.dumps(handback_rec, ensure_ascii=False) + "\n")
     return os.path.join(base_dir, session_name + ".jsonl")
 
 
 def stop_verifier(root, agent_type="critic", agent_id="a1", transcript_path=None):
-    p = {"hook_event_name": "SubagentStop", "session_id": "sess-1", "cwd": root,
-         "agent_type": agent_type, "agent_id": agent_id}
+    p = {
+        "hook_event_name": "SubagentStop",
+        "session_id": "sess-1",
+        "cwd": root,
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+    }
     if transcript_path:
         p["transcript_path"] = transcript_path
     return run(root, p)
@@ -1336,15 +1603,21 @@ def test_close_gate_reads_critic_verdict():
     KO: close 게이트는 "critic 이 돌았다"가 아니라 VERDICT 줄 자체를 읽어야 한다 —
         FAIL 은 미검증 턴과 똑같이 게이트를 풀면 안 된다.
     """
-    for verdict, should_block in (("PASS", False), ("CONDITIONAL", False), ("FAIL", True)):
+    for verdict, should_block in (
+        ("PASS", False),
+        ("CONDITIONAL", False),
+        ("FAIL", True),
+    ):
         root = make_repo(ENFORCING)
         try:
             run(root, write_payload(root, "base/v.md", actor="sub"))
             tp = make_run(root, "a1", "실측 내용...\nVERDICT: %s\n" % verdict)
             stop_verifier(root, transcript_path=tp)
-            check("critic VERDICT %s -> close %s" % (
-                verdict, "still blocks" if should_block else "releases"),
-                blocked(stop(root)[1]) == should_block)
+            check(
+                "critic VERDICT %s -> close %s"
+                % (verdict, "still blocks" if should_block else "releases"),
+                blocked(stop(root)[1]) == should_block,
+            )
         finally:
             shutil.rmtree(root)
 
@@ -1356,8 +1629,10 @@ def test_close_gate_blocks_on_design_only_critic_report():
         run(root, write_payload(root, "base/v.md", actor="sub"))
         tp = make_run(root, "a1", "API e2e 설계를 제시한다. 승인을 기다린다.")
         stop_verifier(root, transcript_path=tp)
-        check("a critic report with no VERDICT line does not satisfy close",
-              blocked(stop(root)[1]))
+        check(
+            "a critic report with no VERDICT line does not satisfy close",
+            blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1380,11 +1655,17 @@ def test_close_gate_reads_verdict_from_subagent_handback():
     root = make_repo(ENFORCING)
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
-        tp = make_handback_run(root, "a1", "Everything is clean. Final report below.",
-                                "수행 보고 전문...\nVERDICT: PASS\n")
+        tp = make_handback_run(
+            root,
+            "a1",
+            "Everything is clean. Final report below.",
+            "수행 보고 전문...\nVERDICT: PASS\n",
+        )
         stop_verifier(root, transcript_path=tp)
-        check("a PASS delivered via SubagentHandback satisfies the close gate",
-              not blocked(stop(root)[1]))
+        check(
+            "a PASS delivered via SubagentHandback satisfies the close gate",
+            not blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1394,8 +1675,9 @@ def test_close_gate_blocks_fail_delivered_via_subagent_handback():
     root = make_repo(ENFORCING)
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
-        tp = make_handback_run(root, "a1", "Final report below.",
-                                "결함 발견...\nVERDICT: FAIL\n")
+        tp = make_handback_run(
+            root, "a1", "Final report below.", "결함 발견...\nVERDICT: FAIL\n"
+        )
         stop_verifier(root, transcript_path=tp)
         code, out, _ = stop(root)
         check("a FAIL delivered via SubagentHandback still blocks close", blocked(out))
@@ -1420,8 +1702,10 @@ def test_fail_after_pass_in_the_same_turn_reverts_verified():
         stop_verifier(root, agent_id="a1", transcript_path=tp1)
         tp2 = make_run(root, "a2", "VERDICT: FAIL\n")
         stop_verifier(root, agent_id="a2", transcript_path=tp2)
-        check("a later FAIL in the same turn reverts an earlier PASS",
-              blocked(stop(root)[1]))
+        check(
+            "a later FAIL in the same turn reverts an earlier PASS",
+            blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1439,8 +1723,10 @@ def test_unresolvable_run_file_fails_open():
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
         stop_verifier(root)  # no transcript_path at all
-        check("an unresolvable run file still satisfies the close gate (fail-open)",
-              not blocked(stop(root)[1]))
+        check(
+            "an unresolvable run file still satisfies the close gate (fail-open)",
+            not blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1452,8 +1738,10 @@ def test_require_verdict_false_restores_old_behavior():
         run(root, write_payload(root, "base/v.md", actor="sub"))
         tp = make_run(root, "a1", "VERDICT 줄이 없는 옛 critic 보고")
         stop_verifier(root, transcript_path=tp)
-        check("require_verdict=false satisfies close even without a VERDICT line",
-              not blocked(stop(root)[1]))
+        check(
+            "require_verdict=false satisfies close even without a VERDICT line",
+            not blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1462,8 +1750,14 @@ def write_receipt(root, all_ok, ts):
     d = os.path.join(root, ".claude", "state")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "verify-receipt.json"), "w", encoding="utf-8") as fh:
-        json.dump({"ts": ts, "commands": [{"cmd": "true", "exit": 0 if all_ok else 1}],
-                   "all_ok": all_ok}, fh)
+        json.dump(
+            {
+                "ts": ts,
+                "commands": [{"cmd": "true", "exit": 0 if all_ok else 1}],
+                "all_ok": all_ok,
+            },
+            fh,
+        )
 
 
 def test_receipt_fresh_and_ok_satisfies_close():
@@ -1471,8 +1765,10 @@ def test_receipt_fresh_and_ok_satisfies_close():
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
         write_receipt(root, True, time.time() + 60)
-        check("a fresh all_ok receipt satisfies the close gate",
-              not blocked(stop(root)[1]))
+        check(
+            "a fresh all_ok receipt satisfies the close gate",
+            not blocked(stop(root)[1]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1494,8 +1790,9 @@ def test_receipt_all_ok_false_does_not_satisfy_close():
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
         write_receipt(root, False, time.time() + 60)
-        check("a receipt with all_ok=false does not satisfy close",
-              blocked(stop(root)[1]))
+        check(
+            "a receipt with all_ok=false does not satisfy close", blocked(stop(root)[1])
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1508,8 +1805,11 @@ def test_receipt_alone_satisfies_close_without_any_verifier():
         run(root, write_payload(root, "base/v.md", actor="sub"))
         write_receipt(root, True, time.time() + 60)
         code, out, _ = stop(root)
-        check("a receipt alone closes a delegated turn with zero verifier spawns",
-              not blocked(out), repr(out[:120]))
+        check(
+            "a receipt alone closes a delegated turn with zero verifier spawns",
+            not blocked(out),
+            repr(out[:120]),
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1521,10 +1821,15 @@ def test_session_start_injects_config_summary():
         code, out, _ = session_start(root)
         payload = json.loads(out)["hookSpecificOutput"]
         text = payload["additionalContext"]
-        check("config summary names enforce and the file-limit from cfg",
-              "enforce=True" in text and "main_thread_file_limit=2" in text, repr(text[:200]))
-        check("config summary points at CORE.md as the normative source",
-              "harness/CORE.md" in text)
+        check(
+            "config summary names enforce and the file-limit from cfg",
+            "enforce=True" in text and "main_thread_file_limit=2" in text,
+            repr(text[:200]),
+        )
+        check(
+            "config summary points at CORE.md as the normative source",
+            "harness/CORE.md" in text,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1543,15 +1848,23 @@ def test_claude_state_other_files_still_exempt():
     """
     root = make_repo(dict(ENFORCING, product=["**"]))
     try:
-        check("direct write under .claude/state/ (non-receipt) is not gated",
-              run(root, write_payload(root, ".claude/state/foo.json"))[0] == 0)
+        check(
+            "direct write under .claude/state/ (non-receipt) is not gated",
+            run(root, write_payload(root, ".claude/state/foo.json"))[0] == 0,
+        )
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
             "tool_input": {"command": "echo x > .claude/state/foo.json"},
         }
-        check("bash write under .claude/state/ (non-receipt) is not gated either",
-              run(root, p)[0] == 0)
+        check(
+            "bash write under .claude/state/ (non-receipt) is not gated either",
+            run(root, p)[0] == 0,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1560,8 +1873,14 @@ def test_receipt_forgery_blocked_main_write():
     """EN/KO: D-014 — 메인 스레드의 Write 로 영수증을 직접 쓰는 자기 인증을 막는다."""
     root = make_repo(ENFORCING)
     try:
-        code, _, err = run(root, write_payload(root, ".claude/state/verify-receipt.json"))
-        check("main thread Write to verify-receipt.json is DENIED", code == 2, "exit=%d" % code)
+        code, _, err = run(
+            root, write_payload(root, ".claude/state/verify-receipt.json")
+        )
+        check(
+            "main thread Write to verify-receipt.json is DENIED",
+            code == 2,
+            "exit=%d" % code,
+        )
         check("deny message names verify.sh", "verify.sh" in err, repr(err[:120]))
     finally:
         shutil.rmtree(root)
@@ -1571,9 +1890,17 @@ def test_receipt_forgery_blocked_sub_edit():
     """EN/KO: D-014 — 서브에이전트의 Edit 도 영수증 직접 쓰기는 막는다."""
     root = make_repo(ENFORCING)
     try:
-        code, _, _ = run(root, write_payload(root, ".claude/state/verify-receipt.json",
-                                              actor="sub", tool="Edit"))
-        check("subagent Edit to verify-receipt.json is DENIED too", code == 2, "exit=%d" % code)
+        code, _, _ = run(
+            root,
+            write_payload(
+                root, ".claude/state/verify-receipt.json", actor="sub", tool="Edit"
+            ),
+        )
+        check(
+            "subagent Edit to verify-receipt.json is DENIED too",
+            code == 2,
+            "exit=%d" % code,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1583,13 +1910,22 @@ def test_receipt_forgery_blocked_bash_redirect():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
-            "tool_input": {"command":
-                            "echo '{\"all_ok\":true}' > .claude/state/verify-receipt.json"},
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
+            "tool_input": {
+                "command": "echo '{\"all_ok\":true}' > .claude/state/verify-receipt.json"
+            },
         }
         code, _, _ = run(root, p)
-        check("bash redirect into verify-receipt.json is DENIED", code == 2, "exit=%d" % code)
+        check(
+            "bash redirect into verify-receipt.json is DENIED",
+            code == 2,
+            "exit=%d" % code,
+        )
     finally:
         shutil.rmtree(root)
 
@@ -1599,8 +1935,12 @@ def test_verify_sh_execution_not_blocked():
     root = make_repo(ENFORCING)
     try:
         p = {
-            "hook_event_name": "PreToolUse", "session_id": "sess-1", "prompt_id": "t1",
-            "cwd": root, "tool_name": "Bash", "tool_use_id": "tu-1",
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-1",
+            "prompt_id": "t1",
+            "cwd": root,
+            "tool_name": "Bash",
+            "tool_use_id": "tu-1",
             "tool_input": {"command": "bash harness/tools/verify.sh"},
         }
         code, _, _ = run(root, p)
@@ -1614,8 +1954,11 @@ def test_receipt_forgery_observed_only_when_not_enforcing():
     root = make_repo(dict(ENFORCING, enforce=False))
     try:
         code, _, _ = run(root, write_payload(root, ".claude/state/verify-receipt.json"))
-        check("non-enforcing config does not block the receipt write",
-              code == 0, "exit=%d" % code)
+        check(
+            "non-enforcing config does not block the receipt write",
+            code == 0,
+            "exit=%d" % code,
+        )
     finally:
         shutil.rmtree(root)
 
