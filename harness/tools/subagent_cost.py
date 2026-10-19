@@ -52,7 +52,7 @@ def load_run(jsonl_path):
                 continue
             try:
                 record = json.loads(line)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 skipped += 1
                 continue
             if not isinstance(record, dict):
@@ -120,7 +120,7 @@ def collect(session_id=None):
         try:
             with open(meta_path, "r") as fh:
                 meta = json.load(fh)
-        except (ValueError, TypeError, OSError):
+        except ValueError, TypeError, OSError:
             total_skipped += 1
             continue
 
@@ -183,13 +183,7 @@ def print_table(summary, total_skipped):
         print(header)
         for m in metrics_names:
             stats = row[m]
-            print(
-                f"{m:<12}"
-                f"{stats['median']:>12,.0f}"
-                f"{stats['p90']:>12,.0f}"
-                f"{stats['p99']:>12,.0f}"
-                f"{stats['max']:>12,.0f}"
-            )
+            print(f"{m:<12}{stats['median']:>12,.0f}{stats['p90']:>12,.0f}{stats['p99']:>12,.0f}{stats['max']:>12,.0f}")
         print()
     print(f"skipped: {total_skipped}")
 
@@ -197,9 +191,7 @@ def print_table(summary, total_skipped):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session", default=None, help="session id to restrict to")
-    parser.add_argument(
-        "--json", action="store_true", help="print JSON instead of a table"
-    )
+    parser.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = parser.parse_args()
 
     by_type, total_skipped = collect(args.session)

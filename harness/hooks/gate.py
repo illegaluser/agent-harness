@@ -206,7 +206,7 @@ def load_config(root):
     try:
         with open(os.path.join(root, CONFIG_REL), encoding="utf-8") as fh:
             cfg.update(json.load(fh))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     return cfg
 
@@ -228,9 +228,7 @@ def emit_metric(root, cfg, record):
         return
     try:
         record["ts"] = int(time.time())
-        with open(
-            os.path.join(state_dir(root), METRICS_NAME), "a", encoding="utf-8"
-        ) as fh:
+        with open(os.path.join(state_dir(root), METRICS_NAME), "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -239,7 +237,7 @@ def emit_metric(root, cfg, record):
 def rel_path(root, path):
     try:
         return os.path.relpath(os.path.realpath(path), os.path.realpath(root))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return path
 
 
@@ -266,7 +264,7 @@ def rel_path_logical(root, path):
         if not os.path.isabs(path):
             path = os.path.join(root, path)
         return os.path.relpath(os.path.normpath(path), os.path.normpath(root))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return path
 
 
@@ -392,7 +390,7 @@ def stale_turn(root, payload):
     try:
         with open(counter_file(root, payload), encoding="utf-8") as fh:
             saved = json.load(fh).get("turn")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
     return saved is not None and saved != turn
 
@@ -433,11 +431,7 @@ def brief_cites_file(root, prompt):
 
 
 def counter_file(root, payload):
-    sid = "".join(
-        c
-        for c in str(payload.get("session_id", "nosession"))
-        if c.isalnum() or c == "-"
-    )
+    sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
     return os.path.join(state_dir(root), "gate-%s.json" % (sid or "nosession"))
 
 
@@ -463,11 +457,7 @@ def approval_file(root, payload):
         세션은 볼 수 없다)와 단일 사용(spawn_gate 가 소비하며 삭제한다).
         청소는 sweep_stale_turns() 의 기존 24시간 규칙에 얹는다.
     """
-    sid = "".join(
-        c
-        for c in str(payload.get("session_id", "nosession"))
-        if c.isalnum() or c == "-"
-    )
+    sid = "".join(c for c in str(payload.get("session_id", "nosession")) if c.isalnum() or c == "-")
     return os.path.join(state_dir(root), "approval-%s.json" % (sid or "nosession"))
 
 
@@ -485,7 +475,7 @@ def read_counter(path, turn):
             saved = json.load(fh)
         if turn is None or saved.get("turn") == turn:
             return saved
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     return {"turn": turn, "files": []}
 
@@ -695,8 +685,7 @@ def bash_gate(root, cfg, payload, base):
     if cfg["enforce"]:
         deny(
             "[harness] 메인 스레드는 Bash 로 산출물 파일을 수정할 수 없다: %s\n"
-            "Edit/Write 를 쓰거나 maker 서브에이전트에 위임하라.\n"
-            % ", ".join(hits[:5])
+            "Edit/Write 를 쓰거나 maker 서브에이전트에 위임하라.\n" % ", ".join(hits[:5])
         )
     allow()
 
@@ -745,10 +734,7 @@ def receipt_gate(root, cfg, payload, base, tool):
         ),
     )
     if cfg["enforce"]:
-        deny(
-            "[harness] verify-receipt.json 은 `bash harness/tools/verify.sh` 만 쓴다.\n"
-            "직접 쓰지 마라.\n"
-        )
+        deny("[harness] verify-receipt.json 은 `bash harness/tools/verify.sh` 만 쓴다.\n직접 쓰지 마라.\n")
 
 
 def write_gate(root, cfg, payload, base, actor, rel):
@@ -771,16 +757,12 @@ def write_gate(root, cfg, payload, base, actor, rel):
     if actor == "sub":
         state["delegated"] = True
         write_counter(cpath, state)
-        emit_metric(
-            root, cfg, dict(base, decision="allow", reason="subagent", path=rel)
-        )
+        emit_metric(root, cfg, dict(base, decision="allow", reason="subagent", path=rel))
         allow()
 
     if rel in state["files"]:
         write_counter(cpath, state)
-        emit_metric(
-            root, cfg, dict(base, decision="allow", reason="same-file", path=rel)
-        )
+        emit_metric(root, cfg, dict(base, decision="allow", reason="same-file", path=rel))
         allow()
 
     limit = int(cfg.get("main_thread_file_limit", 2))
@@ -817,8 +799,7 @@ def write_gate(root, cfg, payload, base, actor, rel):
     if cfg["enforce"]:
         deny(
             "[harness] 이번 턴에 메인 스레드가 직접 고친 산출물 파일이 이미 %d 개다 (%s).\n"
-            "3 개째부터는 계획이 필요하다 — maker 서브에이전트에 위임하라.\n"
-            % (limit, ", ".join(state["files"]))
+            "3 개째부터는 계획이 필요하다 — maker 서브에이전트에 위임하라.\n" % (limit, ", ".join(state["files"]))
         )
     allow()
 
@@ -891,9 +872,7 @@ def spawn_gate(root, cfg, payload, base):
             dict(
                 base,
                 decision="allow",
-                reason="spawn-approved"
-                if state["approved"]
-                else "spawn-approved-carried",
+                reason="spawn-approved" if state["approved"] else "spawn-approved-carried",
             ),
         )
         allow()
@@ -902,9 +881,7 @@ def spawn_gate(root, cfg, payload, base):
     emit_metric(
         root,
         cfg,
-        dict(
-            base, decision="deny" if enforcing else "observe", reason="spawn-unapproved"
-        ),
+        dict(base, decision="deny" if enforcing else "observe", reason="spawn-unapproved"),
     )
     if enforcing:
         deny(
@@ -1089,7 +1066,7 @@ def read_verdict(jsonl_path):
                     continue
                 try:
                     record = json.loads(line)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     continue
                 content = _assistant_content(record)
                 if content is None:
@@ -1214,9 +1191,7 @@ def handle_subagent_stop(root, cfg, payload):
             reason = "verified"
         else:
             jsonl_path = resolve_subagent_jsonl(payload)
-            verdict, resolved = (
-                read_verdict(jsonl_path) if jsonl_path else (None, False)
-            )
+            verdict, resolved = read_verdict(jsonl_path) if jsonl_path else (None, False)
             if not resolved:
                 state["verified"] = True
                 reason = "verified-unparsed"
@@ -1277,13 +1252,13 @@ def receipt_ok(root, state):
     try:
         with open(path, encoding="utf-8") as fh:
             receipt = json.load(fh)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
     if receipt.get("all_ok") is not True:
         return False
     try:
         return float(receipt.get("ts", 0)) >= float(state.get("last_write_ts", 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
 
 
@@ -1365,12 +1340,9 @@ def handle_stop(root, cfg, payload):
             reason_msg = (
                 "[harness] 이번 턴에 산출물이 바뀌었는데 검증자가 돌지 않았다: %s\n"
                 "critic 서브에이전트로 판정을 받거나, 화면·API 가 없는 변경이면\n"
-                "`bash harness/tools/verify.sh` 를 돌리고 끝내라.\n"
-                % ", ".join(state["wrote"][:5])
+                "`bash harness/tools/verify.sh` 를 돌리고 끝내라.\n" % ", ".join(state["wrote"][:5])
             )
-        print(
-            json.dumps({"decision": "block", "reason": reason_msg}, ensure_ascii=False)
-        )
+        print(json.dumps({"decision": "block", "reason": reason_msg}, ensure_ascii=False))
         allow()
 
     try:
@@ -1435,10 +1407,8 @@ def config_summary(cfg):
         % (cfg.get("verifiers", []), len(verify_cmds), cfg.get("max_close_blocks")),
         "막는 것: (1) 메인 스레드가 한 턴에 산출물 %s개 초과 수정 (2) 메인 스레드가 Bash 로"
         % cfg.get("main_thread_file_limit"),
-        "산출물 수정 (3) 승인(ExitPlanMode) 없이 %s 스폰 (4) 브리프가 파일을 하나도"
-        % cfg.get("write_agents", []),
-        "안 가리킨 채 %s 스폰 (5) 위임된 턴을 검증 없이 종료 — 검증 = critic 의"
-        % cfg.get("handoff_roles", []),
+        "산출물 수정 (3) 승인(ExitPlanMode) 없이 %s 스폰 (4) 브리프가 파일을 하나도" % cfg.get("write_agents", []),
+        "안 가리킨 채 %s 스폰 (5) 위임된 턴을 검증 없이 종료 — 검증 = critic 의" % cfg.get("handoff_roles", []),
         "VERDICT PASS/CONDITIONAL 또는 `bash harness/tools/verify.sh` 영수증.",
         "규범 정본: harness/CORE.md",
     ]

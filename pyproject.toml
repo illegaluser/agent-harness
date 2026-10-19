@@ -1,0 +1,4 @@
+# 설치처 lawofficeEKYUNG 의 pyproject.toml 과 같은 규칙. 훅(gate.py)이 Python 3.14 전용 문법(`except A, B:`)을 쓰므로 Python 3.14 이상이 필요하다.
+[tool.ruff]
+line-length = 120
+target-version = "py314"

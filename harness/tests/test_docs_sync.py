@@ -17,6 +17,7 @@ KO: 문서화된 실패 두 가지를 정의하는 쪽(gate.py 의 DEFAULTS, age
 
 Run: python3 harness/tests/test_docs_sync.py
 """
+
 import os
 import re
 import sys
@@ -49,8 +50,7 @@ def parse_frontmatter(agent_path):
     block = text.split("---", 2)[1] if text.startswith("---") else ""
     tools = re.search(r"^tools:\s*(.+)$", block, re.M)
     desc = re.search(r"^description:\s*(.+)$", block, re.M)
-    return (tools.group(1).strip() if tools else None,
-            desc.group(1).strip() if desc else None)
+    return (tools.group(1).strip() if tools else None, desc.group(1).strip() if desc else None)
 
 
 def first_sentence(desc):
@@ -66,9 +66,7 @@ def first_sentence(desc):
 def core_role_rows():
     """EN/KO: CORE.md '## 2. 역할' 표의 5행을 (역할, 도구칸, 하는일칸) 으로 뽑는다."""
     text = read(CORE)
-    rows = re.findall(
-        r"^\|\s*`(\w+)`\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$", text, re.M
-    )
+    rows = re.findall(r"^\|\s*`(\w+)`\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$", text, re.M)
     return {name: (tools, did) for name, tools, did in rows if name in AGENT_NAMES}
 
 
@@ -91,8 +89,11 @@ def test_role_table_tools_match_frontmatter():
     for name in AGENT_NAMES:
         tools, _ = parse_frontmatter(os.path.join(HARNESS_DIR, "agents", "%s.md" % name))
         core_tools = rows.get(name, (None, None))[0]
-        check("CORE.md tools cell for %s matches frontmatter" % name,
-              core_tools == tools, "core=%r frontmatter=%r" % (core_tools, tools))
+        check(
+            "CORE.md tools cell for %s matches frontmatter" % name,
+            core_tools == tools,
+            "core=%r frontmatter=%r" % (core_tools, tools),
+        )
 
 
 def test_role_table_description_matches_frontmatter_first_sentence():
@@ -102,8 +103,11 @@ def test_role_table_description_matches_frontmatter_first_sentence():
         _, desc = parse_frontmatter(os.path.join(HARNESS_DIR, "agents", "%s.md" % name))
         expected = first_sentence(desc)
         core_did = rows.get(name, (None, None))[1]
-        check("CORE.md 하는일 cell for %s matches frontmatter's first sentence" % name,
-              core_did == expected, "core=%r expected=%r" % (core_did, expected))
+        check(
+            "CORE.md 하는일 cell for %s matches frontmatter's first sentence" % name,
+            core_did == expected,
+            "core=%r expected=%r" % (core_did, expected),
+        )
 
 
 # EN: Files that must never carry a copy of a DEFAULTS key — the documented
@@ -131,8 +135,7 @@ def test_config_keys_are_not_copied_into_prose():
     for rel, exceptions in NO_COPY_FILES.items():
         path = os.path.join(REPO_ROOT, rel)
         text = read(path)
-        leaked = [k for k in keys
-                  if k not in exceptions and re.search(r"\b%s\b" % re.escape(k), text)]
+        leaked = [k for k in keys if k not in exceptions and re.search(r"\b%s\b" % re.escape(k), text)]
         check("%s does not copy a DEFAULTS key" % rel, not leaked, str(leaked))
 
 
@@ -148,8 +151,7 @@ def test_agent_frontmatter_model_is_an_alias():
         block = text.split("---", 2)[1] if text.startswith("---") else ""
         m = re.search(r"^model:\s*(.+)$", block, re.M)
         value = m.group(1).strip() if m else None
-        check("agents/%s.md model: is an alias" % name,
-              value in ALLOWED_MODEL_ALIASES, "model=%r" % value)
+        check("agents/%s.md model: is an alias" % name, value in ALLOWED_MODEL_ALIASES, "model=%r" % value)
 
 
 EXACT_MODEL_ID_FILES = [
@@ -173,8 +175,7 @@ def test_no_exact_model_ids_outside_decisions_log():
     for path in EXACT_MODEL_ID_FILES:
         text = read(path)
         hits = EXACT_MODEL_ID_PATTERN.findall(text)
-        check("%s has no exact model IDs" % os.path.relpath(path, REPO_ROOT),
-              not hits, str(hits))
+        check("%s has no exact model IDs" % os.path.relpath(path, REPO_ROOT), not hits, str(hits))
 
 
 def main():

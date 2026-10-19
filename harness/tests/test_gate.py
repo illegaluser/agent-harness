@@ -27,9 +27,7 @@ import sys
 import tempfile
 import time
 
-GATE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "gate.py"
-)
+GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks", "gate.py")
 GATE = os.path.normpath(GATE)
 
 PASSED = []
@@ -40,9 +38,7 @@ def make_repo(config):
     root = tempfile.mkdtemp(prefix="gate-test-")
     os.makedirs(os.path.join(root, ".claude"), exist_ok=True)
     os.makedirs(os.path.join(root, "base"), exist_ok=True)
-    with open(
-        os.path.join(root, ".claude", "harness.json"), "w", encoding="utf-8"
-    ) as fh:
+    with open(os.path.join(root, ".claude", "harness.json"), "w", encoding="utf-8") as fh:
         json.dump(config, fh)
     return root
 
@@ -79,11 +75,7 @@ def write_payload(root, path, actor="main", turn="t1", tool="Write", agent_type=
 
 def check(name, cond, detail=""):
     (PASSED if cond else FAILED).append(name)
-    print(
-        ("  ok   " if cond else "  FAIL ")
-        + name
-        + (("  — " + detail) if detail and not cond else "")
-    )
+    print(("  ok   " if cond else "  FAIL ") + name + (("  — " + detail) if detail and not cond else ""))
 
 
 ENFORCING = {
@@ -144,9 +136,7 @@ def test_agent_type_alone_is_main_thread():
                 root,
                 write_payload(root, "base/a%d.md" % i, agent_type="general-purpose"),
             )
-        code, _, _ = run(
-            root, write_payload(root, "base/a3.md", agent_type="general-purpose")
-        )
+        code, _, _ = run(root, write_payload(root, "base/a3.md", agent_type="general-purpose"))
         check(
             "agent_type without agent_id counts as MAIN (denied)",
             code == 2,
@@ -359,8 +349,7 @@ def test_bash_read_only_allowed():
         check("real false positive #1", run(root, p)[0] == 0)
 
         p["tool_input"] = {
-            "command": 'grep -rn "reasoning_effort:" base/agents base/x '
-            "/Users/x/.claude/agents 2>/dev/null"
+            "command": 'grep -rn "reasoning_effort:" base/agents base/x /Users/x/.claude/agents 2>/dev/null'
         }
         check("real false positive #2", run(root, p)[0] == 0)
 
@@ -544,9 +533,7 @@ def test_bash_directory_targets():
         }
 
         p["tool_input"] = {"command": "rm -rf base"}
-        check(
-            "rm of a product dir without a trailing slash DENIED", run(root, p)[0] == 2
-        )
+        check("rm of a product dir without a trailing slash DENIED", run(root, p)[0] == 2)
 
         p["tool_input"] = {"command": "rm -r base/sub"}
         check("rm -r of a product subdir DENIED", run(root, p)[0] == 2)
@@ -808,17 +795,13 @@ def test_observe_mode_never_denies():
     """
     root = make_repo(dict(ENFORCING, enforce=False))
     try:
-        codes = [
-            run(root, write_payload(root, "base/o%d.md" % i))[0] for i in range(1, 7)
-        ]
+        codes = [run(root, write_payload(root, "base/o%d.md" % i))[0] for i in range(1, 7)]
         check("observe mode allows everything", codes == [0] * 6, str(codes))
         line = open(
             os.path.join(root, ".claude", "state", "harness-metrics.jsonl"),
             encoding="utf-8",
         ).read()
-        check(
-            "observe mode still records what it would have blocked", '"observe"' in line
-        )
+        check("observe mode still records what it would have blocked", '"observe"' in line)
     finally:
         shutil.rmtree(root)
 
@@ -858,9 +841,7 @@ def test_unconfigured_install_is_inert():
     """EN/KO: No config at all must mean no obstruction, not a default guess."""
     root = tempfile.mkdtemp(prefix="gate-test-")
     try:
-        codes = [
-            run(root, write_payload(root, "base/u%d.md" % i))[0] for i in range(1, 7)
-        ]
+        codes = [run(root, write_payload(root, "base/u%d.md" % i))[0] for i in range(1, 7)]
         check("no harness.json → gate is inert", codes == [0] * 6, str(codes))
     finally:
         shutil.rmtree(root)
@@ -914,9 +895,7 @@ def test_direct_handling_owes_no_verification():
         root2 = make_repo(ENFORCING)
         for i in (1, 2):
             run(root2, write_payload(root2, "base/d%d.md" % i))
-        check(
-            "2 files (at the budget) still does not block", not blocked(stop(root2)[1])
-        )
+        check("2 files (at the budget) still does not block", not blocked(stop(root2)[1]))
         shutil.rmtree(root2)
     finally:
         shutil.rmtree(root)
@@ -1074,9 +1053,7 @@ def test_exit_plan_mode_records_approval():
     try:
         check("maker blocked before approval", spawn(root, "maker")[0] == 2)
         approve(root)
-        check(
-            "maker allowed after an accepted ExitPlanMode", spawn(root, "maker")[0] == 0
-        )
+        check("maker allowed after an accepted ExitPlanMode", spawn(root, "maker")[0] == 0)
     finally:
         shutil.rmtree(root)
 
@@ -1265,8 +1242,7 @@ def test_handoff_gate_blocks_a_brief_that_cites_nothing():
         approve(root)
         check(
             "a path that does not exist does not count",
-            spawn(root, "maker", prompt="사실은 docs/NOPE-does-not-exist.md 에 있다")[0]
-            == 2,
+            spawn(root, "maker", prompt="사실은 docs/NOPE-does-not-exist.md 에 있다")[0] == 2,
         )
     finally:
         shutil.rmtree(root)
@@ -1330,9 +1306,7 @@ def test_sanctioned_path_runs_end_to_end():
         stop(root, prompt_id="turn-1")
 
         # 4. delegation must still be possible in the new turn
-        res = spawn(
-            root, "maker", session="sess-1", prompt="계획: .claude/harness.json"
-        )
+        res = spawn(root, "maker", session="sess-1", prompt="계획: .claude/harness.json")
         check("maker still spawnable after the turn boundary", res[0] == 0, str(res[1]))
 
         # 5. the subagent does the work the main thread could not
@@ -1472,14 +1446,11 @@ def test_session_start_injects_facts():
         payload = json.loads(out)["hookSpecificOutput"]
         check(
             "generated config summary is injected even with no facts file",
-            "[harness]" in payload["additionalContext"]
-            and "harness/CORE.md" in payload["additionalContext"],
+            "[harness]" in payload["additionalContext"] and "harness/CORE.md" in payload["additionalContext"],
             repr(out[:160]),
         )
 
-        with open(
-            os.path.join(root, ".claude", "harness-facts.md"), "w", encoding="utf-8"
-        ) as fh:
+        with open(os.path.join(root, ".claude", "harness-facts.md"), "w", encoding="utf-8") as fh:
             fh.write("ENFORCE_IS_ON")
         code, out, _ = session_start(root)
         payload = json.loads(out)["hookSpecificOutput"]
@@ -1614,8 +1585,7 @@ def test_close_gate_reads_critic_verdict():
             tp = make_run(root, "a1", "실측 내용...\nVERDICT: %s\n" % verdict)
             stop_verifier(root, transcript_path=tp)
             check(
-                "critic VERDICT %s -> close %s"
-                % (verdict, "still blocks" if should_block else "releases"),
+                "critic VERDICT %s -> close %s" % (verdict, "still blocks" if should_block else "releases"),
                 blocked(stop(root)[1]) == should_block,
             )
         finally:
@@ -1675,9 +1645,7 @@ def test_close_gate_blocks_fail_delivered_via_subagent_handback():
     root = make_repo(ENFORCING)
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
-        tp = make_handback_run(
-            root, "a1", "Final report below.", "결함 발견...\nVERDICT: FAIL\n"
-        )
+        tp = make_handback_run(root, "a1", "Final report below.", "결함 발견...\nVERDICT: FAIL\n")
         stop_verifier(root, transcript_path=tp)
         code, out, _ = stop(root)
         check("a FAIL delivered via SubagentHandback still blocks close", blocked(out))
@@ -1790,9 +1758,7 @@ def test_receipt_all_ok_false_does_not_satisfy_close():
     try:
         run(root, write_payload(root, "base/v.md", actor="sub"))
         write_receipt(root, False, time.time() + 60)
-        check(
-            "a receipt with all_ok=false does not satisfy close", blocked(stop(root)[1])
-        )
+        check("a receipt with all_ok=false does not satisfy close", blocked(stop(root)[1]))
     finally:
         shutil.rmtree(root)
 
@@ -1873,9 +1839,7 @@ def test_receipt_forgery_blocked_main_write():
     """EN/KO: D-014 — 메인 스레드의 Write 로 영수증을 직접 쓰는 자기 인증을 막는다."""
     root = make_repo(ENFORCING)
     try:
-        code, _, err = run(
-            root, write_payload(root, ".claude/state/verify-receipt.json")
-        )
+        code, _, err = run(root, write_payload(root, ".claude/state/verify-receipt.json"))
         check(
             "main thread Write to verify-receipt.json is DENIED",
             code == 2,
@@ -1892,9 +1856,7 @@ def test_receipt_forgery_blocked_sub_edit():
     try:
         code, _, _ = run(
             root,
-            write_payload(
-                root, ".claude/state/verify-receipt.json", actor="sub", tool="Edit"
-            ),
+            write_payload(root, ".claude/state/verify-receipt.json", actor="sub", tool="Edit"),
         )
         check(
             "subagent Edit to verify-receipt.json is DENIED too",
@@ -1916,9 +1878,7 @@ def test_receipt_forgery_blocked_bash_redirect():
             "cwd": root,
             "tool_name": "Bash",
             "tool_use_id": "tu-1",
-            "tool_input": {
-                "command": "echo '{\"all_ok\":true}' > .claude/state/verify-receipt.json"
-            },
+            "tool_input": {"command": "echo '{\"all_ok\":true}' > .claude/state/verify-receipt.json"},
         }
         code, _, _ = run(root, p)
         check(
